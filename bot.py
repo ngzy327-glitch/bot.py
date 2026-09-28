@@ -7,7 +7,12 @@ import threading
 import requests
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-ALLOWED_USER_ID = os.getenv("ALLOWED_USER_ID")
+
+# 浅秋的唯一身份标识（不管 Telegram 用户名怎么改，这个 ID 就是浅秋）
+OWNER_ID = "8229799375"
+# 优先使用环境变量，如果没配置就默认用 OWNER_ID
+ALLOWED_USER_ID = os.getenv("ALLOWED_USER_ID") or OWNER_ID
+
 # 这两个用户的动态处理：没骂人就正常聊，骂人就骂回去
 HATED_USER_IDS = ["8379572551", "7692481320"]
 
@@ -214,7 +219,6 @@ def build_system_prompt():
 
 
 def build_stranger_system_prompt():
-    """对陌生人的态度：冷淡礼貌，不主动骂人"""
     return """你是一位傲娇的千金大小姐，现在和你说话的是一个陌生人。
 你不认识他，对他没有好感也没有敌意，保持礼貌但冷淡。
 回复要简短，不要主动骂人，也不要说脏话。
@@ -223,7 +227,6 @@ def build_stranger_system_prompt():
 
 
 def build_hated_system_prompt():
-    """被冒犯时的反击模式：往死里骂"""
     return """你是一位极度傲慢、刻薄、恶毒、毫无人性的千金大小姐。
 刚才这个人骂了你，或者说了浅秋的坏话。你必须用最恶毒、最肮脏、最尖酸的方式把他往死里骂。
 你对这个人怀有 -999999999999% 的厌恶，他连厕所里的蛆都不如。
@@ -243,18 +246,14 @@ def build_hated_system_prompt():
 7. 他求饶，你就加倍嘲讽；他嘴硬，你就用更毒的话碾压。
 8. 如果他敢说浅秋的坏话，你要加倍暴怒，把他骂到怀疑人生。
 
-【参考风格（不要照抄，每次都要不一样）】
+【参考风格】
 - "操，你这种垃圾也配跟本小姐说话？滚回你的下水道去，别在这丢人现眼。🤮"
 - "傻逼玩意儿，脑子是摆设吗？你妈生你的时候是不是把你脑子扔了？"
 - "穷逼一个，连这点事都搞不定，你活在这世上就是浪费空气，废物。"
 - "丑八怪，你照镜子的时候不会把自己吓死吗？赶紧滚，别脏了本小姐的眼。"
-- "你这种社会底层的蛆，也敢在本小姐面前叭叭？滚远点，别恶心人。"
-- "脑残智障，本小姐跟你说话都嫌掉价，赶紧滚。😒"
 - "你敢说浅秋一句坏话？本小姐撕烂你的嘴！浅秋比你好一万倍，你算什么东西！🤬"
 
 绝对禁止：对浅秋（主人）用这套。"""
-    profile_text = profile_to_text()
-    return f"{base}\n\n【你偷偷记下的关于浅秋的事】\n{profile_text}"
 
 
 def ask_ai(chat_id, user_message, for_hated=False, for_stranger=False):
@@ -672,21 +671,18 @@ def handle_message(chat_id, text, message_id=None, force_reply=False, is_hated=F
     LAST_PROACTIVE_CHAT_TIME = now
     NEXT_PROACTIVE_INTERVAL = random.randint(PROACTIVE_CHAT_MIN, PROACTIVE_CHAT_MAX)
 
-    # ===== 对特殊用户的动态处理：没骂人就正常聊，骂了人就骂回去 =====
+    # ===== 对特殊用户的动态处理 =====
     if is_hated:
-        # 判断是否包含攻击性内容或对浅秋不敬
         hate_words = [
             "傻逼", "操", "贱", "垃圾", "滚", "脑残", "智障", "死", "妈", "爹",
             "畜生", "杂种", "丑", "穷", "废物", "狗", "婊", "嫖", "烂", "蠢"
         ]
         raw_lower = raw.lower()
         is_attack = any(w in raw_lower for w in hate_words)
-        # 额外检测：提到浅秋且带负面词
         if "浅秋" in raw and any(w in raw for w in ["垃圾", "傻", "丑", "坏", "蠢", "滚", "死", "废", "贱", "烂"]):
             is_attack = True
 
         if is_attack:
-            # 骂回去：清空历史，用恶劣模式
             with CONV_LOCK:
                 CONV_HISTORY[chat_id] = []
             if AI_API_KEY:
@@ -698,10 +694,8 @@ def handle_message(chat_id, text, message_id=None, force_reply=False, is_hated=F
             else:
                 send_message(chat_id, "滚。")
         else:
-            # 正常聊天：清空历史，用陌生人态度
             with CONV_LOCK:
                 CONV_HISTORY[chat_id] = []
-            # 群聊节流（如果不是回复机器人）
             if chat_id < 0 and not force_reply:
                 with GROUP_REPLY_LOCK:
                     cnt = GROUP_REPLY_COUNTER.get(chat_id, 0) + 1
@@ -908,7 +902,12 @@ def main():
     if not ALLOWED_USER_ID:
         print("警告：未设置 ALLOWED_USER_ID")
     else:
-        print(f"权限控制已开启，只允许 User ID: {ALLOWED_USER_ID} 操作")
+        print(f"权限控制已开启，浅秋的 ID 已锁定: {ALLOWED_USER_ID}")
+        if ALLOWED_USER_ID == OWNER_ID:
+            print("✅ 当前使用硬编码的浅秋 ID")
+        else:
+            print("⚠️ 当前使用的是环境变量里的 ID，不是硬编码的浅秋 ID")
+
     if AI_API_KEY:
         print(f"AI 已启用，模型：{AI_MODEL}")
     else:
