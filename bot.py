@@ -12,8 +12,8 @@ BASE_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 # ==========================
 # 本地模拟账户数据
 # ==========================
-BALANCE = 1000.0   # 初始资金 1000 USDT
-POSITIONS = []     # 当前持仓
+BALANCE = 1000.0
+POSITIONS = []
 POS_LOCK = threading.Lock()
 
 LST = []
@@ -38,23 +38,53 @@ def send_message(chat_id, text):
         print("发送消息失败:", e)
 
 def get_current_price(symbol):
-    """使用 OKX 公开行情接口获取价格，无需 API Key"""
+    """获取实时价格，优先 OKX，备选 Binance"""
     inst_id = f"{symbol.upper()}-USDT"
     try:
         url = f"https://www.okx.com/api/v5/market/ticker?instId={inst_id}"
         resp = requests.get(url, timeout=5).json()
         if resp.get("code") == "0" and resp.get("data"):
-            return float(resp["data"][0]["last"])
+            price = float(resp["data"][0]["last"])
+            print(f"[行情] OKX 返回 {symbol} 价格: {price}")
+            return price
     except Exception as e:
-        print(f"获取 {symbol} 行情失败: {e}")
+        print(f"[行情] OKX 获取 {symbol} 失败: {e}")
+    try:
+        url = f"https://api.binance.com/api/v3/ticker/price?symbol={symbol.upper()}USDT"
+        resp = requests.get(url, timeout=5).json()
+        if "price" in resp:
+            price = float(resp["price"])
+            print(f"[行情] Binance 返回 {symbol} 价格: {price}")
+            return price
+    except Exception as e:
+        print(f"[行情] Binance 获取 {symbol} 失败: {e}")
+    return None
+
+def get_crypto_info(symbol):
+    """获取行情详情（价格+涨跌幅）"""
+    inst_id = f"{symbol.upper()}-USDT"
+    # 1. 尝试 OKX 获取完整行情
+    try:
+        url = f"https://www.okx.com/api/v5/market/ticker?instId={inst_id}"
+        resp = requests.get(url, timeout=5).json()
+        if resp.get("code") == "0" and resp.get("data"):
+            data = resp["data"][0]
+            price = float(data["last"])
+            open_24h = float(data["open24h"])
+            c24 = ((price - open_24h) / open_24h) * 100 if open_24h else 0
+            return {"price": price, "change_24h": c24, "change_7d": None}
+    except:
+        pass
+    # 2. 备选 Binance 获取价格（无涨跌幅）
+    price = get_current_price(symbol)
+    if price:
+        return {"price": price, "change_24h": None, "change_7d": None}
     return None
 
 def get_balance_info(chat_id):
-    """查询余额"""
     total_pnl = 0.0
     with POS_LOCK:
         current_positions = list(POSITIONS)
-    
     for pos in current_positions:
         price = get_current_price(pos["symbol"])
         if price:
@@ -63,7 +93,6 @@ def get_balance_info(chat_id):
             else:
                 pnl = (pos["entry_price"] - price) * pos["qty"]
             total_pnl += pnl
-
     msg = f"💰 模拟账户余额\n"
     msg += "━━━━━━━━━━━━\n"
     msg += f"可用资金：{BALANCE:,.2f} USDT\n"
@@ -72,29 +101,23 @@ def get_balance_info(chat_id):
     send_message(chat_id, msg)
 
 def get_position_info(chat_id):
-    """查询持仓"""
     with POS_LOCK:
         current_positions = list(POSITIONS)
-    
     if not current_positions:
         send_message(chat_id, "📭 当前无持仓。")
         return
-
     for pos in current_positions:
         price = get_current_price(pos["symbol"])
         if not price:
             continue
-
         if pos["side"] == "多":
             pnl = (price - pos["entry_price"]) * pos["qty"]
             liq_price = pos["entry_price"] * (1 - 1 / pos["leverage"])
         else:
             pnl = (pos["entry_price"] - price) * pos["qty"]
             liq_price = pos["entry_price"] * (1 + 1 / pos["leverage"])
-
         roe = (pnl / pos["margin"]) * 100 if pos["margin"] > 0 else 0.0
         direction = "多 🟢" if pos["side"] == "多" else "空 🔴"
-
         msg = f"📊 {pos['symbol']} 持仓\n"
         msg += "━━━━━━━━━━━━\n"
         msg += f"方向：{direction}\n"
@@ -110,26 +133,20 @@ def get_position_info(chat_id):
         send_message(chat_id, msg)
 
 def open_position(chat_id, symbol, side, dir_name, leverage, margin_usdt):
-    """开仓"""
     global BALANCE
-    
     if margin_usdt > BALANCE:
         send_message(chat_id, f"❌ 保证金不足！当前可用：{BALANCE:,.2f} USDT")
         return
-
     price = get_current_price(symbol)
     if not price:
         send_message(chat_id, f"❌ 无法获取 {symbol} 行情，请检查币种。")
         return
-
     qty = (margin_usdt * leverage) / price
-    
     with POS_LOCK:
         for p in POSITIONS:
             if p["symbol"] == symbol.upper():
                 send_message(chat_id, f"⚠️ 已有 {symbol.upper()} 持仓，请先平仓。")
                 return
-        
         BALANCE -= margin_usdt
         POSITIONS.append({
             "symbol": symbol.upper(),
@@ -139,51 +156,43 @@ def open_position(chat_id, symbol, side, dir_name, leverage, margin_usdt):
             "entry_price": price,
             "qty": qty
         })
-
     msg = f"✅ 模拟开仓成功！\n"
     msg += f"币种：{symbol.upper()}\n"
     msg += f"方向：{dir_name}\n"
     msg += f"杠杆：{leverage}x\n"
     msg += f"保证金：{margin_usdt:,.2f} USDT\n"
-    msg += f"开仓价：${price:,.4f}\n"
+    msg += f"实时开仓价：${price:,.4f}\n"
     msg += f"数量：{qty:.4f}"
     send_message(chat_id, msg)
 
 def close_position(chat_id, symbol):
-    """平仓"""
     global BALANCE
     symbol = symbol.upper()
-
     with POS_LOCK:
         pos = None
         for p in POSITIONS:
             if p["symbol"] == symbol:
                 pos = p
                 break
-        
         if not pos:
             send_message(chat_id, f"📭 未找到 {symbol} 的持仓。")
             return
-
         price = get_current_price(symbol)
         if not price:
             send_message(chat_id, "❌ 无法获取行情，平仓失败。")
             return
-
         if pos["side"] == "多":
             pnl = (price - pos["entry_price"]) * pos["qty"]
         else:
             pnl = (pos["entry_price"] - price) * pos["qty"]
-
         return_amount = pos["margin"] + pnl
         BALANCE += return_amount
         POSITIONS.remove(pos)
-
     msg = f"✅ 平仓成功！\n"
     msg += f"币种：{symbol}\n"
     msg += f"方向：{pos['side']}\n"
     msg += f"开仓价：${pos['entry_price']:,.4f}\n"
-    msg += f"平仓价：${price:,.4f}\n"
+    msg += f"实时平仓价：${price:,.4f}\n"
     msg += f"盈亏：{pnl:+,.2f} USDT\n"
     msg += f"返还金额：{return_amount:,.2f} USDT"
     send_message(chat_id, msg)
@@ -198,11 +207,9 @@ def price_monitor_worker():
                 symbol = listener["symbol"]
                 target = listener["target_price"]
                 chat_id = listener["chat_id"]
-
                 price = get_current_price(symbol)
                 if price is None:
                     continue
-
                 triggered = False
                 if target > price:
                     if price >= target:
@@ -210,14 +217,12 @@ def price_monitor_worker():
                 else:
                     if price <= target:
                         triggered = True
-
                 if triggered:
                     msg = f"🚨 价格提醒！\n"
                     msg += f"币种：{symbol.upper()}\n"
                     msg += f"当前价：${price:,.4f}\n"
                     msg += f"目标价：${target:,.4f}"
                     send_message(chat_id, msg)
-
                     with LST_LOCK:
                         if listener in LST:
                             LST.remove(listener)
@@ -229,12 +234,34 @@ def handle_message(chat_id, text):
     global BALANCE
     raw_text = text.strip()
 
-    # 1. 余额查询
+    # 1. 行情查询：支持 btc. 或 btc。 (中英文句号)
+    if raw_text.endswith(".") or raw_text.endswith("。"):
+        symbol = raw_text[:-1].strip().upper()
+        # 必须是纯字母，长度2-10
+        if symbol.isalpha() and 2 <= len(symbol) <= 10:
+            info = get_crypto_info(symbol)
+            if info:
+                msg = f"📊 {symbol} 行情\n"
+                msg += "━━━━━━━━━━━━\n"
+                msg += f"💰 价格：${info['price']:,.4f}\n"
+                msg += "━━━━━━━━━━━━\n"
+                if info.get("change_24h") is not None:
+                    arrow = "📈" if info["change_24h"] >= 0 else "📉"
+                    msg += f"{arrow} 24h涨跌：{info['change_24h']:+.2f}%\n"
+                if info.get("change_7d") is not None:
+                    arrow = "📈" if info["change_7d"] >= 0 else "📉"
+                    msg += f"{arrow} 7d涨跌：{info['change_7d']:+.2f}%"
+                send_message(chat_id, msg)
+            else:
+                print(f"查询 {symbol} 行情失败")
+        return
+
+    # 2. 余额查询
     if raw_text == "myye":
         get_balance_info(chat_id)
         return
 
-    # 2. 充值指令：充值1000
+    # 3. 充值指令
     recharge_match = re.match(r'^充值\s*([0-9.]+)$', raw_text)
     if recharge_match:
         try:
@@ -246,21 +273,20 @@ def handle_message(chat_id, text):
             pass
         return
 
-    # 3. 持仓查询
+    # 4. 持仓查询
     if raw_text == "仓位情况":
         get_position_info(chat_id)
         return
 
-    # 4. 平仓指令：平仓btc
+    # 5. 平仓指令
     close_match = re.match(r'^平仓\s*([a-zA-Z]+)$', raw_text)
     if close_match:
         close_position(chat_id, close_match.group(1))
         return
 
-    # 5. 开仓指令：btc，100x，多，300
+    # 6. 开仓指令
     normalized_text = raw_text.replace("，", ",").replace(" ", ",")
     parts = [p for p in normalized_text.split(",") if p]
-
     if len(parts) == 4:
         symbol = parts[0].upper()
         lev_str = parts[1].lower().replace("x", "")
@@ -286,7 +312,6 @@ def handle_message(chat_id, text):
             return
         open_position(chat_id, symbol, dir_name, dir_name, leverage, margin_usdt)
         return
-
     return
 
 def main():
@@ -294,10 +319,8 @@ def main():
         print("警告：未设置 ALLOWED_USER_ID，机器人将对所有人开放！")
     else:
         print(f"权限控制已开启，只允许 User ID: {ALLOWED_USER_ID} 操作。")
-
     t = threading.Thread(target=price_monitor_worker, daemon=True)
     t.start()
-
     print("Bot 已启动...")
     offset = None
     while True:
