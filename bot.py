@@ -10,11 +10,14 @@ ALLOWED_USER_ID = os.getenv("ALLOWED_USER_ID")
 BASE_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
 # ==========================
-# 本地模拟账户数据
+# 本地账户数据
 # ==========================
 BALANCE = 1000.0
 POSITIONS = []
 POS_LOCK = threading.Lock()
+
+TRADE_HISTORY = [] # 战绩记录
+HISTORY_LOCK = threading.Lock()
 
 LST = []
 LST_LOCK = threading.Lock()
@@ -63,7 +66,6 @@ def get_current_price(symbol):
 def get_crypto_info(symbol):
     """获取行情详情（价格+涨跌幅）"""
     inst_id = f"{symbol.upper()}-USDT"
-    # 1. 尝试 OKX 获取完整行情
     try:
         url = f"https://www.okx.com/api/v5/market/ticker?instId={inst_id}"
         resp = requests.get(url, timeout=5).json()
@@ -75,7 +77,6 @@ def get_crypto_info(symbol):
             return {"price": price, "change_24h": c24, "change_7d": None}
     except:
         pass
-    # 2. 备选 Binance 获取价格（无涨跌幅）
     price = get_current_price(symbol)
     if price:
         return {"price": price, "change_24h": None, "change_7d": None}
@@ -93,7 +94,7 @@ def get_balance_info(chat_id):
             else:
                 pnl = (pos["entry_price"] - price) * pos["qty"]
             total_pnl += pnl
-    msg = f"💰 模拟账户余额\n"
+    msg = f"💰 账户余额\n"
     msg += "━━━━━━━━━━━━\n"
     msg += f"可用资金：{BALANCE:,.2f} USDT\n"
     msg += f"未实现盈亏：{total_pnl:+,.2f} USDT\n"
@@ -132,6 +133,39 @@ def get_position_info(chat_id):
         msg += f"未实现盈亏：{pnl:+,.2f} USDT"
         send_message(chat_id, msg)
 
+def get_trade_history(chat_id):
+    """生成盈亏报表"""
+    with HISTORY_LOCK:
+        history = list(TRADE_HISTORY)
+    
+    if not history:
+        send_message(chat_id, "📭 暂无历史交易记录。")
+        return
+
+    total_trades = len(history)
+    total_pnl = sum(t["pnl"] for t in history)
+    win_trades = [t for t in history if t["pnl"] > 0]
+    loss_trades = [t for t in history if t["pnl"] <= 0]
+    win_count = len(win_trades)
+    loss_count = len(loss_trades)
+    win_rate = (win_count / total_trades) * 100 if total_trades > 0 else 0
+    
+    avg_win = sum(t["pnl"] for t in win_trades) / win_count if win_count > 0 else 0
+    avg_loss = sum(t["pnl"] for t in loss_trades) / loss_count if loss_count > 0 else 0
+
+    msg = f"📈 战绩报表\n"
+    msg += "━━━━━━━━━━━━\n"
+    msg += f"总交易次数：{total_trades} 次\n"
+    msg += f"总盈亏：{total_pnl:+,.2f} USDT\n"
+    msg += "━━━━━━━━━━━━\n"
+    msg += f"胜率：{win_rate:.2f}%\n"
+    msg += f"盈利次数：{win_count} 次\n"
+    msg += f"亏损次数：{loss_count} 次\n"
+    msg += "━━━━━━━━━━━━\n"
+    msg += f"平均盈利：{avg_win:+,.2f} USDT\n"
+    msg += f"平均亏损：{avg_loss:+,.2f} USDT"
+    send_message(chat_id, msg)
+
 def open_position(chat_id, symbol, side, dir_name, leverage, margin_usdt):
     global BALANCE
     if margin_usdt > BALANCE:
@@ -156,7 +190,7 @@ def open_position(chat_id, symbol, side, dir_name, leverage, margin_usdt):
             "entry_price": price,
             "qty": qty
         })
-    msg = f"✅ 模拟开仓成功！\n"
+    msg = f"✅ 开仓成功！\n"
     msg += f"币种：{symbol.upper()}\n"
     msg += f"方向：{dir_name}\n"
     msg += f"杠杆：{leverage}x\n"
@@ -188,6 +222,15 @@ def close_position(chat_id, symbol):
         return_amount = pos["margin"] + pnl
         BALANCE += return_amount
         POSITIONS.remove(pos)
+        
+        # 记录战绩
+        with HISTORY_LOCK:
+            TRADE_HISTORY.append({
+                "symbol": symbol,
+                "side": pos["side"],
+                "pnl": pnl
+            })
+            
     msg = f"✅ 平仓成功！\n"
     msg += f"币种：{symbol}\n"
     msg += f"方向：{pos['side']}\n"
@@ -196,6 +239,22 @@ def close_position(chat_id, symbol):
     msg += f"盈亏：{pnl:+,.2f} USDT\n"
     msg += f"返还金额：{return_amount:,.2f} USDT"
     send_message(chat_id, msg)
+
+def withdraw_balance(chat_id, amount_str):
+    """提现处理"""
+    global BALANCE
+    try:
+        amount = float(amount_str)
+    except ValueError:
+        return
+    if amount <= 0:
+        send_message(chat_id, "❌ 提现金额必须大于 0。")
+        return
+    if amount > BALANCE:
+        send_message(chat_id, f"❌ 余额不足！当前可用：{BALANCE:,.2f} USDT")
+        return
+    BALANCE -= amount
+    send_message(chat_id, f"✅ 提现成功！\n提现金额：{amount:,.2f} USDT\n当前可用余额：{BALANCE:,.2f} USDT")
 
 def price_monitor_worker():
     print("价格监听线程已启动...")
@@ -237,7 +296,6 @@ def handle_message(chat_id, text):
     # 1. 行情查询：支持 btc. 或 btc。 (中英文句号)
     if raw_text.endswith(".") or raw_text.endswith("。"):
         symbol = raw_text[:-1].strip().upper()
-        # 必须是纯字母，长度2-10
         if symbol.isalpha() and 2 <= len(symbol) <= 10:
             info = get_crypto_info(symbol)
             if info:
@@ -252,16 +310,39 @@ def handle_message(chat_id, text):
                     arrow = "📈" if info["change_7d"] >= 0 else "📉"
                     msg += f"{arrow} 7d涨跌：{info['change_7d']:+.2f}%"
                 send_message(chat_id, msg)
-            else:
-                print(f"查询 {symbol} 行情失败")
         return
 
-    # 2. 余额查询
+    # 2. 监听指令：监听btc3400
+    listen_match = re.match(r'^监听\s*([a-zA-Z]+)\s*([0-9.]+)$', raw_text)
+    if listen_match:
+        symbol_str = listen_match.group(1).upper()
+        target_price_str = listen_match.group(2)
+        try:
+            target_price = float(target_price_str)
+        except ValueError:
+            return
+        if target_price <= 0:
+            send_message(chat_id, "❌ 监听价格必须大于 0。")
+            return
+        with LST_LOCK:
+            for listener in LST:
+                if listener["symbol"] == symbol_str and listener["target_price"] == target_price:
+                    send_message(chat_id, "⚠️ 该监听已存在。")
+                    return
+            LST.append({
+                "symbol": symbol_str,
+                "target_price": target_price,
+                "chat_id": chat_id
+            })
+        send_message(chat_id, f"✅ 已开启监听：{symbol_str} 达到 ${target_price:,.4f} 时通知你。")
+        return
+
+    # 3. 余额查询
     if raw_text == "myye":
         get_balance_info(chat_id)
         return
 
-    # 3. 充值指令
+    # 4. 充值指令
     recharge_match = re.match(r'^充值\s*([0-9.]+)$', raw_text)
     if recharge_match:
         try:
@@ -273,18 +354,29 @@ def handle_message(chat_id, text):
             pass
         return
 
-    # 4. 持仓查询
+    # 5. 提现指令：提现100
+    withdraw_match = re.match(r'^提现\s*([0-9.]+)$', raw_text)
+    if withdraw_match:
+        withdraw_balance(chat_id, withdraw_match.group(1))
+        return
+
+    # 6. 战绩查询
+    if raw_text == "战绩":
+        get_trade_history(chat_id)
+        return
+
+    # 7. 持仓查询
     if raw_text == "仓位情况":
         get_position_info(chat_id)
         return
 
-    # 5. 平仓指令
+    # 8. 平仓指令
     close_match = re.match(r'^平仓\s*([a-zA-Z]+)$', raw_text)
     if close_match:
         close_position(chat_id, close_match.group(1))
         return
 
-    # 6. 开仓指令
+    # 9. 开仓指令
     normalized_text = raw_text.replace("，", ",").replace(" ", ",")
     parts = [p for p in normalized_text.split(",") if p]
     if len(parts) == 4:
