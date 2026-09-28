@@ -30,7 +30,6 @@ GROUP_REPLY_INTERVAL = 4
 SLEEPING = False
 SLEEP_START_TIME = 0
 
-# 睡眠时长分档语料池（醒来时抱怨用）
 SLEEP_WAKE_MESSAGES = {
     "short": [
         "哼，这么快就把本小姐叫醒了？本小姐的觉还没睡够呢。",
@@ -72,7 +71,6 @@ SLEEP_WAKE_POOLS = {k: list(v) for k, v in SLEEP_WAKE_MESSAGES.items()}
 SLEEP_POOL_LOCK = threading.Lock()
 
 def get_wake_message(hours):
-    """根据睡眠时长返回抱怨语，不重复"""
     if hours < 1:
         key = "short"
     elif hours < 4:
@@ -91,6 +89,14 @@ def get_wake_message(hours):
         msg = random.choice(pool)
         pool.remove(msg)
         return msg
+
+# ==========================
+# 主动聊天配置
+# ==========================
+LAST_PROACTIVE_CHAT_TIME = time.time()
+PROACTIVE_CHAT_MIN = 1800
+PROACTIVE_CHAT_MAX = 5400
+NEXT_PROACTIVE_INTERVAL = random.randint(PROACTIVE_CHAT_MIN, PROACTIVE_CHAT_MAX)
 
 # ==========================
 # 账户数据
@@ -247,6 +253,43 @@ def ask_ai(chat_id, user_message):
         print(f"AI 返回异常: {data}")
     except Exception as e:
         print(f"AI 调用失败: {e}")
+    return None
+
+def ask_ai_proactive(chat_id):
+    """让 AI 主动想一个话题来找主人聊天"""
+    if not AI_API_KEY:
+        return None
+    proactive_prompt = """你现在要主动找主人说话。请根据你的人设（傲娇千金大小姐）和你们之前的对话上下文，自然地说一句话来开启话题。
+可以的方向：
+- 关心他最近有没有看盘，赚了亏了
+- 吐槽他好久没理你
+- 说你自己无聊了，想找他聊聊
+- 分享一个你"想到"的交易心得或提醒
+- 随机问一个生活化的小问题
+- 抱怨他给你起的名字/夸他给你选的头像
+要求：不要说"我在主动找你"这种暴露机制的话，就像真人突然想起他一样自然。
+只输出一句话，20-60字，符合人设。"""
+    with CONV_LOCK:
+        if chat_id not in CONV_HISTORY:
+            CONV_HISTORY[chat_id] = []
+        history = CONV_HISTORY[chat_id]
+        messages_to_send = [{"role": "system", "content": build_system_prompt()}] + list(history[-6:])
+        messages_to_send.append({"role": "user", "content": proactive_prompt})
+    try:
+        resp = requests.post(
+            f"{AI_BASE_URL}/chat/completions",
+            headers={"Authorization": f"Bearer {AI_API_KEY}", "Content-Type": "application/json"},
+            json={"model": AI_MODEL, "messages": messages_to_send, "temperature": 0.95, "max_tokens": 200},
+            timeout=30
+        )
+        data = resp.json()
+        if "choices" in data and data["choices"]:
+            reply = data["choices"][0]["message"]["content"].strip()
+            with CONV_LOCK:
+                CONV_HISTORY[chat_id].append({"role": "assistant", "content": reply})
+            return reply
+    except Exception as e:
+        print(f"主动聊天生成失败: {e}")
     return None
 
 def extract_profile_async(chat_id, user_message, ai_reply):
@@ -523,12 +566,33 @@ def background_worker(chat_id):
             print(f"后台异常: {e}")
         time.sleep(5)
 
+def proactive_chat_worker(chat_id):
+    """主动找主人聊天的后台线程"""
+    global LAST_PROACTIVE_CHAT_TIME, NEXT_PROACTIVE_INTERVAL
+    print("主动聊天线程已启动...")
+    while True:
+        try:
+            now = time.time()
+            if SLEEPING:
+                time.sleep(60)
+                continue
+            if now - LAST_PROACTIVE_CHAT_TIME >= NEXT_PROACTIVE_INTERVAL:
+                reply = ask_ai_proactive(chat_id)
+                if reply:
+                    send_message(chat_id, reply)
+                LAST_PROACTIVE_CHAT_TIME = now
+                NEXT_PROACTIVE_INTERVAL = random.randint(PROACTIVE_CHAT_MIN, PROACTIVE_CHAT_MAX)
+                print(f"主动聊天已发送，下次间隔 {NEXT_PROACTIVE_INTERVAL} 秒")
+        except Exception as e:
+            print(f"主动聊天异常: {e}")
+        time.sleep(60)
+
 # ==========================
 # 消息处理
 # ==========================
 def handle_message(chat_id, text, message_id=None):
     global BALANCE, LAST_ACTIVITY_TIME, BROADCAST_ENABLED, LAST_BROADCAST_TIME, IDLE_NOTIFIED
-    global REPLY_TO_MESSAGE_ID, SLEEPING, SLEEP_START_TIME
+    global REPLY_TO_MESSAGE_ID, SLEEPING, SLEEP_START_TIME, LAST_PROACTIVE_CHAT_TIME, NEXT_PROACTIVE_INTERVAL
     REPLY_TO_MESSAGE_ID = message_id
     raw = text.strip()
 
@@ -536,8 +600,10 @@ def handle_message(chat_id, text, message_id=None):
     with ACTIVITY_LOCK:
         idle = now - LAST_ACTIVITY_TIME
         LAST_ACTIVITY_TIME = now
+    # 用户发言后重置主动聊天计时
+    LAST_PROACTIVE_CHAT_TIME = now
+    NEXT_PROACTIVE_INTERVAL = random.randint(PROACTIVE_CHAT_MIN, PROACTIVE_CHAT_MAX)
 
-    # ===== 睡眠模式逻辑 =====
     if raw == "睡觉":
         SLEEPING = True
         SLEEP_START_TIME = time.time()
@@ -616,11 +682,12 @@ def handle_message(chat_id, text, message_id=None):
             if m:
                 sym, tgt = m.group(1).upper(), float(m.group(2))
                 with LST_LOCK: LST.append({"symbol": sym, "target_price": tgt, "chat_id": chat_id})
-                send_message(chat_id, f"✅ 监听 {sym} @ ${tgt:,.4f}")
-            return
+                send_message(chat_id, f"✅ 监听 {sym} @ ${tgt:,.4)$f}")
+            return',
 
-        if raw.startswith("充值"):
-            m = re.match(r'^充值\s*([0-9.]+)$', raw)
+        if raw raw.startswith("充值"):
+            m = re)
+.match(r'^充值\s*([           0-9. if]+)$', raw)
             if m:
                 amt = float(m.group(1))
                 if amt > 0:
@@ -629,8 +696,7 @@ def handle_message(chat_id, text, message_id=None):
             return
 
         if raw.startswith("提现"):
-            m = re.match(r'^提现\s*([0-9.]+)$', raw)
-            if m: withdraw_balance(chat_id, m.group(1))
+            m = re.match(r'^提现\s*([0-9.]+ m: withdraw_balance(chat_id, m.group(1))
             return
 
         if raw.startswith("平仓"):
@@ -686,6 +752,7 @@ def main():
 
     t1 = threading.Thread(target=background_worker, args=(ALLOWED_USER_ID,), daemon=True); t1.start()
     t2 = threading.Thread(target=price_monitor_worker, daemon=True); t2.start()
+    t3 = threading.Thread(target=proactive_chat_worker, args=(ALLOWED_USER_ID,), daemon=True); t3.start()
 
     print("Bot 已启动...")
     offset = None
