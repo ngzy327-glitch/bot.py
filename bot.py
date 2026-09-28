@@ -16,9 +16,9 @@ ALLOWED_USER_ID = os.getenv("ALLOWED_USER_ID")
 
 BASE_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
-# 用 LST 代替 LISTENERS，防止被浏览器翻译
 LST = []
 LST_LOCK = threading.Lock()
+
 
 def get_updates(offset=None):
     url = f"{BASE_URL}/getUpdates"
@@ -30,6 +30,7 @@ def get_updates(offset=None):
         print("获取更新失败:", e)
         return {}
 
+
 def send_message(chat_id, text):
     url = f"{BASE_URL}/sendMessage"
     payload = {"chat_id": chat_id, "text": text}
@@ -38,47 +39,63 @@ def send_message(chat_id, text):
     except Exception as e:
         print("发送消息失败:", e)
 
-def gen_sign(method, url, query_string="", body_string=""):
+
+def gen_sign(method, url, query_string=None, payload_string=None):
+    """Gate.io API v4 官方标准签名函数（含调试打印）"""
+    key = GATE_API_KEY
+    secret = GATE_API_SECRET
     t = time.time()
     m = hashlib.sha512()
-    m.update(body_string.encode("utf-8"))
-    body_hash = m.hexdigest()
-    timestamp = str(int(t))
-    sign_string = f"{method}\n{url}\n{query_string}\n{body_hash}\n{timestamp}"
-    sign = hmac.new(
-        GATE_API_SECRET.encode("utf-8"),
-        sign_string.encode("utf-8"),
-        hashlib.sha512
-    ).hexdigest()
+    m.update((payload_string or "").encode('utf-8'))
+    hashed_payload = m.hexdigest()
+    s = '%s\n%s\n%s\n%s\n%s' % (method, url, query_string or "", hashed_payload, t)
+
+    # 🔍 调试打印（排查签名问题时使用，稳定后可注释掉）
+    print(f"=== 调试信息 ===")
+    print(f"Method: {method}")
+    print(f"URL: {url}")
+    print(f"QueryString: [{query_string}]")
+    print(f"HashedPayload: {hashed_payload}")
+    print(f"Timestamp: {t}")
+    print(f"SignString:\n{s}")
+    print(f"Secret前4位: {secret[:4]}")
+    print(f"=================")
+
+    sign = hmac.new(secret.encode('utf-8'), s.encode('utf-8'), hashlib.sha512).hexdigest()
+    return {'KEY': key, 'Timestamp': str(t), 'SIGN': sign}
+
+
+def gate_request(method, endpoint, params=None, body=None):
+    query_string = urlencode(params) if params else ""
+    payload_string = body if body else ""
+
+    sign_headers = gen_sign(method, endpoint, query_string, payload_string)
+
     headers = {
         "Accept": "application/json",
         "Content-Type": "application/json",
-        "KEY": GATE_API_KEY,
-        "Timestamp": timestamp,
-        "SIGN": sign,
+        "KEY": sign_headers["KEY"],
+        "Timestamp": sign_headers["Timestamp"],
+        "SIGN": sign_headers["SIGN"],
     }
-    return headers
 
-def gate_request(method, endpoint, params=None, body=None):
-    url_path = endpoint
-    query_string = urlencode(params) if params else ""
-    body_string = body if body else ""
-    headers = gen_sign(method, url_path, query_string, body_string)
     if query_string:
-        full_url = f"{GATE_BASE_URL}{url_path}?{query_string}"
+        full_url = f"{GATE_BASE_URL}{endpoint}?{query_string}"
     else:
-        full_url = f"{GATE_BASE_URL}{url_path}"
+        full_url = f"{GATE_BASE_URL}{endpoint}"
+
     try:
         if method == "GET":
             resp = requests.get(full_url, headers=headers, timeout=10)
         elif method == "POST":
-            resp = requests.post(full_url, headers=headers, data=body_string, timeout=10)
+            resp = requests.post(full_url, headers=headers, data=payload_string, timeout=10)
         else:
             return None
         return resp.json()
     except Exception as e:
         print(f"Gate.io 请求异常: {e}")
         return None
+
 
 def get_current_price(symbol):
     try:
@@ -88,6 +105,7 @@ def get_current_price(symbol):
     except:
         pass
     return None
+
 
 def get_balance_info(chat_id):
     res = gate_request("GET", "/futures/usdt/accounts")
@@ -102,6 +120,7 @@ def get_balance_info(chat_id):
     msg += f"总金额：{total:,.2f} USDT\n"
     msg += f"可用余额：{available:,.2f} USDT"
     send_message(chat_id, msg)
+
 
 def get_position_info(chat_id):
     res = gate_request("GET", "/futures/usdt/positions")
@@ -136,6 +155,7 @@ def get_position_info(chat_id):
         msg += f"收益率：{roe:+.2f}%\n"
         msg += f"未实现盈亏：{unrealised_pnl:+.2f} USDT"
         send_message(chat_id, msg)
+
 
 def execute_trade(chat_id, symbol, side, dir_name, leverage, margin_usdt):
     lev_body = json.dumps({"leverage": str(leverage)})
@@ -177,6 +197,7 @@ def execute_trade(chat_id, symbol, side, dir_name, leverage, margin_usdt):
         print(f"开仓失败: {order_res}")
         send_message(chat_id, f"❌ 开仓失败：{error_msg}")
 
+
 def price_monitor_worker():
     print("价格监听线程已启动...")
     while True:
@@ -209,6 +230,7 @@ def price_monitor_worker():
         except Exception as e:
             print(f"监听线程异常: {e}")
         time.sleep(30)
+
 
 def handle_message(chat_id, text):
     raw_text = text.strip()
@@ -282,6 +304,7 @@ def handle_message(chat_id, text):
 
     return
 
+
 def main():
     if not ALLOWED_USER_ID:
         print("警告：未设置 ALLOWED_USER_ID，机器人将对所有人开放！")
@@ -312,6 +335,7 @@ def main():
                 if text:
                     handle_message(chat_id, text)
         time.sleep(1)
+
 
 if __name__ == "__main__":
     main()
