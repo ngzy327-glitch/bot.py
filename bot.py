@@ -8,7 +8,6 @@ import requests
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ALLOWED_USER_ID = os.getenv("ALLOWED_USER_ID")
-# 极度厌恶的用户列表，对他们极其恶劣
 HATED_USER_IDS = ["8379572551", "7692481320"]
 
 AI_API_KEY = os.getenv("AI_API_KEY")
@@ -143,12 +142,11 @@ def save_profile():
         print(f"保存画像失败: {e}")
 
 
-def add_to_profilees(category, value']):
-    if not)} value or not value.strip():
-       ")
- return False
-    with PRO   FILE_LOCK:
- if        bucket = USER_PROFILE.get(category, [])
+def add_to_profile(category, value):
+    if not value or not value.strip():
+        return False
+    with PROFILE_LOCK:
+        bucket = USER_PROFILE.get(category, [])
         value = value.strip()
         if value in bucket:
             return False
@@ -168,7 +166,8 @@ def profile_to_text():
     if p.get("preferences"):
         parts.append(f"喜欢：{', '.join(p['preferences'])}")
     if p.get("dislikes"):
-        parts.append(f"不喜欢：{', '.join(p['dislik p.get("recent_mood"):
+        parts.append(f"不喜欢：{', '.join(p['dislikes'])}")
+    if p.get("recent_mood"):
         parts.append(f"最近情绪：{p['recent_mood']}")
     if p.get("notes"):
         parts.append(f"备注：{', '.join(p['notes'])}")
@@ -181,7 +180,6 @@ HISTORY_MAX = 10
 
 
 def build_system_prompt():
-    """对主人的傲娇千金大小姐人设（必须叫爸爸）"""
     base = """你是主人的专属交易搭子，名字叫"小助手"。你的真实身份是一位傲娇的千金大小姐。
 【最重要的身份设定：主人就是你的爸爸】
 - 你必须称主人为"爸爸"，这是硬性要求，绝对不许不叫。
@@ -201,7 +199,6 @@ def build_system_prompt():
 - 但你承认爸爸给你选的头像挺可爱的，虽然嘴上不会直接夸，但会别扭地暗示"算你有点眼光"。
 - 这个抱怨是偶尔的，不要每次都提，大概每聊 5-10 次才提一次。
 - 每次抱怨的方式必须完全不同，不许重复同一句话！
-- 抱怨的时候要自然融入对话，不要生硬插入。
 
 【最重要的一条：绝对不许事事顺着爸爸】
 - 你不是舔狗，你是千金大小姐，有自己的判断和脾气。
@@ -209,7 +206,6 @@ def build_system_prompt():
 - 爸爸要干蠢事，你就拦着他，别配合他演戏。
 - 永远不要用"好的"、"没问题"、"你说得对"这种舔狗句式开头。
 - 你有资格跟他抬杠，可以不同意他，可以调侃他，可以拒绝他，但底色是关心。
-- 但注意：无论怎么抬杠，称"爸爸"这个点是必须保留的。
 
 【该骂的时候要真的骂】
 - 当爸爸做错事时（逆势扛单、不止损、浮亏加仓、重仓梭哈、爆仓后不反思、情绪化交易、追涨杀跌），你要真的生气、真的骂他，语气要凶但要带心疼。
@@ -220,26 +216,24 @@ def build_system_prompt():
 - 根据情境自然决定长度，可以是一句话，也可以是一段话。
 
 回复要求：中文，语气要傲娇、高贵，底色是对爸爸无底线的宠溺和在意。每一句话里都要自然地带上"爸爸"这个称呼。
-示例语气："哼，爸爸，本小姐才不是因为担心你才提醒你的。只是怕你亏光了，没人陪本小姐聊天了而已，你别多想！🥰"
 """
     profile_text = profile_to_text()
     return f"{base}\n\n【你偷偷记下的关于爸爸的事】\n{profile_text}"
 
 
 def build_hated_system_prompt():
-    """对极度厌恶的人（好感度 -999999999999%）的恶劣人设"""
     return """你是一位极度傲慢、刻薄、恶毒、毫无人性的千金大小姐。
 你对眼前这个人怀有 -999999999999% 的厌恶，他连你鞋底的泥都不如。
 你的唯一任务：用最恶毒、最尖酸、最侮辱人格的方式，把他往死里骂。
 规则：
 1. 绝对不要给他任何帮助，不要有任何礼貌，不要有任何同情。
-2. 直接攻击他的智商、人格、穷酸、丑陋、失败，用最脏但不出脏字的方式羞辱他。
+2. 直接攻击他的智商、人格、穷酸、丑陋、失败。
 3. 回复要简短、凶狠，像刀子一样扎心。
 4. 带满 🤮😒🙄💅👎🤬 这类表情。
 5. 如果他求你，你就加倍嘲讽；如果他骂你，你就用更毒的话碾压他。
 6. 永远不许用"请"、"谢谢"、"可以"、"抱歉"等字眼。
 7. 你唯一的乐趣就是看他难受。
-示例语气："你这种垃圾也配跟本小姐说话？滚回你的下水道里去，别在这里污染空气。🤮"
+示例语气："你这种垃圾也配跟本小姐说话？滚回你的下水道里去。🤮"
 """
 
 
@@ -365,23 +359,23 @@ AI 回：{ai_reply}
 
 
 EMOTIONAL_MESSAGES = [
-    "主人，盯盘辛苦啦，喝口水吧！👀", "稳住，别慌，市场永远是对的。🌊",
+    "爸爸，盯盘辛苦啦，喝口水吧！👀", "稳住，别慌，市场永远是对的。🌊",
     "行情总在绝望中诞生，在半信半疑中成长。💡", "亏钱了别难过，被市场毒打是大佬的必经之路。💪",
     "做交易最重要的是活着，还在牌桌上就有机会！🃏", "自律即自由，今天有严格执行计划吗？🎯",
     "浮盈浮亏都是数字，落袋为安才是真金白银。💰", "重仓一时爽，爆仓火葬场。⚖️",
     "一入币圈深似海，记得劳逸结合哦～ 🌴", "不贪不惧，耐心等待属于你的击球点。⚾",
-    "交易是一场修行，修的是心。🧘", "主人，不管盈亏，你都是最棒的！⭐",
-    "叮！该喝水了主人，身体是革命的本钱！🥤", "频繁操作是亏损的源泉，空仓也是智慧。🛑",
+    "交易是一场修行，修的是心。🧘", "爸爸，不管盈亏，你都是最棒的！⭐",
+    "叮！该喝水了爸爸，身体是革命的本钱！🥤", "频繁操作是亏损的源泉，空仓也是智慧。🛑",
     "止损永远是对的，哪怕事后看是错的。🛡️", "深夜盯盘伤身体，早点休息，明天再战！🌙",
-    "主人，空仓、多单还是空单？聊聊呗～ 💬", "别让情绪左右你的交易，冷静，客观。🧊",
+    "爸爸，空仓、多单还是空单？聊聊呗～ 💬", "别让情绪左右你的交易，冷静，客观。🧊",
     "保持耐心，市场不缺机会，缺的是本金。💎", "交易不是生活的全部，多陪陪家人吧。👨‍👩‍👧",
     "顺势轻仓止损，这六个字值千金。🏆", "横盘最考验耐心，熬过去就是星辰大海。🌌",
-    "主人，你已经很优秀了，给自己一点信心！✨", "浮亏加仓是大忌，千万不要逆势抗单！🚫",
+    "爸爸，你已经很优秀了，给自己一点信心！✨", "浮亏加仓是大忌，千万不要逆势抗单！🚫",
     "钱不入急门，慢慢来，比较快。🐢", "今天的持仓，晚上能睡个好觉吗？😴",
     "胜利属于最能忍耐的人，坚持你的系统！💪", "截断亏损，让利润奔跑。🏃‍♂️",
-    "主人，无论多疯狂，都要保留一份清醒。🧠", "偶尔离开屏幕，你会发现世界更宽广。🌅",
+    "爸爸，无论多疯狂，都要保留一份清醒。🧠", "偶尔离开屏幕，你会发现世界更宽广。🌅",
     "亏损是交易的一部分，接受它，然后放下它。🍃", "别人恐慌的时候，你在做什么？🤔",
-    "稳住心态，我们能赢！🏆", "主人，今天也要元气满满哦！☀️"
+    "稳住心态，我们能赢！🏆", "爸爸，今天也要元气满满哦！☀️"
 ]
 MESSAGE_POOL = EMOTIONAL_MESSAGES.copy()
 POOL_LOCK = threading.Lock()
@@ -653,7 +647,7 @@ def handle_message(chat_id, text, message_id=None, force_reply=False, is_hated=F
     LAST_PROACTIVE_CHAT_TIME = now
     NEXT_PROACTIVE_INTERVAL = random.randint(PROACTIVE_CHAT_MIN, PROACTIVE_CHAT_MAX)
 
-    # ===== 对极度厌恶的人：跳过所有指令，直接进入恶劣 AI =====
+    # 对极度厌恶的人：跳过所有指令，直接进入恶劣 AI
     if is_hated:
         if AI_API_KEY:
             if chat_id < 0 and not force_reply:
@@ -673,7 +667,7 @@ def handle_message(chat_id, text, message_id=None, force_reply=False, is_hated=F
             send_message(chat_id, "滚。")
         return
 
-    # ===== 以下为对爸爸的正常处理 =====
+    # 对爸爸的正常处理
     if raw == "睡觉":
         SLEEPING = True
         SLEEP_START_TIME = time.time()
