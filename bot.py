@@ -1,6 +1,7 @@
 import os
 import requests
 import time
+import re
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 BASE_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
@@ -23,94 +24,81 @@ def send_message(chat_id, text):
     except Exception as e:
         print("发送消息失败:", e)
 
-def get_crypto_data(user_input):
-    symbol = user_input.upper()
-    if not symbol.endswith("USDT"):
-        symbol = symbol + "USDT"
-
-    url_24h = f"https://api.binance.com/api/v3/ticker/24hr?symbol={symbol}"
+def get_crypto_data(symbol):
+    # 使用 CryptoCompare 接口，直接获取美元、人民币价格及涨跌幅
+    url = f"https://min-api.cryptocompare.com/data/pricemultifull?fsyms={symbol}&tsyms=USD,CNY"
     try:
-        resp = requests.get(url_24h, timeout=10)
-        if resp.status_code == 400:
-            return None, "找不到该交易对"
+        resp = requests.get(url, timeout=10).json()
         
-        data = resp.json()
-        if "lastPrice" not in data:
-            return None, "数据格式错误"
-
-        price_usd = float(data["lastPrice"])
-        change_24h = float(data["priceChangePercent"])
-        
-        url_kline = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=1d&limit=8"
-        kline_resp = requests.get(url_kline, timeout=10).json()
-        change_7d = None
-        if isinstance(kline_resp, list) and len(kline_resp) >= 8:
-            price_7d_ago = float(kline_resp[0][4])
-            change_7d = ((price_usd - price_7d_ago) / price_7d_ago) * 100
-
-        usd_cny_rate = 7.2
-        try:
-            fx_resp = requests.get("https://api.frankfurter.app/latest?from=USD&to=CNY", timeout=5).json()
-            if "rates" in fx_resp and "CNY" in fx_resp["rates"]:
-                usd_cny_rate = fx_resp["rates"]["CNY"]
-        except:
-            pass
-
-        price_cny = price_usd * usd_cny_rate
-
-        return {
-            "price_usd": price_usd,
-            "price_cny": price_cny,
-            "change_24h": change_24h,
-            "change_7d": change_7d
-        }, None
+        # 检查是否成功返回数据
+        if "RAW" in resp and symbol in resp["RAW"]:
+            usd_data = resp["RAW"][symbol]["USD"]
+            cny_data = resp["RAW"][symbol]["CNY"]
+            
+            return {
+                "price_usd": usd_data["PRICE"],
+                "price_cny": cny_data["PRICE"],
+                "change_24h": usd_data.get("CHANGEPCT24HOUR"),
+                "change_7d": usd_data.get("CHANGEPCT7DAYS")
+            }, None
+        else:
+            # 记录真实的错误信息到日志，但不发给用户
+            error_msg = resp.get("Message", "找不到该币种或数据格式错误")
+            return None, error_msg
 
     except Exception as e:
-        print(f"请求币安API异常: {e}")
+        print(f"请求异常: {e}")
         return None, "网络请求异常"
 
 def reply_crypto(chat_id, user_input):
-    data, err = get_crypto_data(user_input)
-    if err:
-        # 查询失败时，默默记录到日志，绝对不发给用户，防止消息轰炸
-        print(f"查询 {user_input} 失败: {err}")
+    # 只提取字母，并转为大写，防止用户输入 "btc " 或 "BTC."
+    symbol = re.sub(r'[^A-Za-z]', '', user_input.upper())
+    if not symbol:
         return
 
-    msg = f"📊 {user_input.upper()} 行情\n"
+    data, err = get_crypto_data(symbol)
+    
+    if err:
+        # 严格遵照你的要求：查询失败时，默默记录到 Railway 日志，绝不发送任何 Telegram 消息
+        print(f"查询 {symbol} 失败: {err}")
+        return
+
+    msg = f"📊 {symbol} 行情\n"
     msg += "━━━━━━━━━━━━\n"
-    msg += f"🇺🇸 价格：${data['price_usd']:,.2f}\n"
-    msg += f"🇨🇳 价格：¥{data['price_cny']:,.2f}\n"
+    msg += f"🇺🇸 价格：${data['price_usd']:,.4f}\n"
+    msg += f"🇨🇳 价格：¥{data['price_cny']:,.4f}\n"
     msg += "━━━━━━━━━━━━\n"
     
-    arrow_24 = "📈" if data['change_24h'] >= 0 else "📉"
-    msg += f"{arrow_24} 24h涨跌：{data['change_24h']:+.2f}%\n"
-    
-    if data['change_7d'] is not None:
-        arrow_7 = "📈" if data['change_7d'] >= 0 else "📉"
-        msg += f"{arrow_7} 7d涨跌：{data['change_7d']:+.2f}%"
-    else:
-        msg += "7d涨跌：获取失败"
+    c24 = data['change_24h']
+    if c24 is not None:
+        arrow_24 = "📈" if c24 >= 0 else "📉"
+        msg += f"{arrow_24} 24h涨跌：{c24:+.2f}%\n"
+        
+    c7 = data['change_7d']
+    if c7 is not None:
+        arrow_7 = "📈" if c7 >= 0 else "📉"
+        msg += f"{arrow_7} 7d涨跌：{c7:+.2f}%"
         
     send_message(chat_id, msg)
 
 def handle_message(chat_id, text):
     raw_text = text.strip().upper()
     
-    # 1. 如果是 /price 命令，提取币种
+    # 1. 如果是 /price 命令
     if raw_text.startswith("/PRICE"):
         args = raw_text.split()
-        if len(args) < 2:
-            return # 静默，不回复用法教程
-        reply_crypto(chat_id, args[1])
-    
-    # 2. 如果是纯字母（长度2-10），认为可能是币种代码（如 BTC, ETH, SOL）
-    # 满足条件才去查询，查不到会默默失败，不会发送任何错误消息
-    elif raw_text.isalpha() and 2 <= len(raw_text) <= 10:
-        reply_crypto(chat_id, raw_text)
-    
-    # 3. 其他任何输入（包括 /start, /help, 普通聊天、中文），直接忽略，一言不发
-    else:
+        if len(args) >= 2:
+            reply_crypto(chat_id, args[1])
         return
+
+    # 2. 如果用户直接输入币种，提取字母后的长度在 2 到 10 之间，才尝试查询
+    clean_symbol = re.sub(r'[^A-Z]', '', raw_text)
+    if 2 <= len(clean_symbol) <= 10:
+        reply_crypto(chat_id, clean_symbol)
+        return
+        
+    # 3. 其他所有情况（包括 /start, /help, 中文聊天等），直接静默忽略，不回复任何内容
+    return
 
 def main():
     print("Bot 已启动...")
