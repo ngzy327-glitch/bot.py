@@ -40,7 +40,7 @@ def send_message(chat_id, text):
 def gen_sign(method, url, query_string=None, payload_string=None):
     key = GATE_API_KEY
     secret = GATE_API_SECRET
-    # 🔥 修复关键：使用 int 强制转换为纯整数秒级时间戳
+    # 🔥 最关键的一行：必须使用 int 转成纯整数秒级时间戳！
     t = str(int(time.time()))
     
     m = hashlib.sha512()
@@ -49,7 +49,6 @@ def gen_sign(method, url, query_string=None, payload_string=None):
     
     s = '%s\n%s\n%s\n%s\n%s' % (method, url, query_string or "", hashed_payload, t)
     
-    # 调试打印
     print(f"=== 调试信息 ===")
     print(f"SignString:\n{s}")
     print(f"=================")
