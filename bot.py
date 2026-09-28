@@ -5,20 +5,17 @@ import time
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 BASE_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
-# CoinCap 的币种映射
+# CoinGecko 的币种映射
 COIN_MAP = {
     "BTC": "bitcoin",
     "ETH": "ethereum",
     "SOL": "solana",
     "DOGE": "dogecoin",
-    "BNB": "binance-coin",
-    "XRP": "xrp",
+    "BNB": "binancecoin",
+    "XRP": "ripple",
     "ADA": "cardano",
     "DOT": "polkadot",
-    "LTC": "litecoin",
-    "SHIB": "shiba-inu",
-    "AVAX": "avalanche",
-    "LINK": "chainlink"
+    "LTC": "litecoin"
 }
 
 def get_updates(offset=None):
@@ -42,47 +39,46 @@ def send_message(chat_id, text):
 def get_crypto_data(symbol):
     coin_id = COIN_MAP.get(symbol, symbol.lower())
     
-    # 1. 获取当前价格和24小时涨跌幅
-    url_now = f"https://api.coincap.io/v2/assets/{coin_id}"
-    try:
-        resp = requests.get(url_now, timeout=10).json()
-        if "data" not in resp:
-            return None, f"CoinCap 找不到 {coin_id}"
-        
-        data = resp["data"]
-        price_usd = float(data["priceUsd"])
-        change_24h = float(data["changePercent24Hr"])
-    except Exception as e:
-        print(f"CoinCap 请求异常: {e}")
-        return None, "网络请求异常"
-
-    # 2. 获取7天涨跌幅
-    change_7d = None
-    url_history = f"https://api.coincap.io/v2/assets/{coin_id}/history?interval=d1&limit=8"
-    try:
-        hist_resp = requests.get(url_history, timeout=10).json()
-        if "data" in hist_resp and len(hist_resp["data"]) >= 8:
-            price_7d_ago = float(hist_resp["data"][0]["priceUsd"])
-            change_7d = ((price_usd - price_7d_ago) / price_7d_ago) * 100
-    except Exception as e:
-        print(f"CoinCap 历史数据异常: {e}")
-
-    # 3. 获取美元兑人民币汇率
-    price_cny = None
+    # 1. 获取美元兑人民币汇率
+    cny_rate = 7.2
     try:
         fx_resp = requests.get("https://api.frankfurter.app/latest?from=USD&to=CNY", timeout=5).json()
         if "rates" in fx_resp and "CNY" in fx_resp["rates"]:
-            usd_cny_rate = fx_resp["rates"]["CNY"]
-            price_cny = price_usd * usd_cny_rate
-    except Exception as e:
-        print(f"汇率请求异常: {e}")
+            cny_rate = fx_resp["rates"]["CNY"]
+    except:
+        pass
 
-    return {
-        "price_usd": price_usd,
-        "price_cny": price_cny,
-        "change_24h": change_24h,
-        "change_7d": change_7d
-    }, None
+    # 2. 获取 CoinGecko 行情数据（价格+涨跌幅）
+    url = f"https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids={coin_id}&price_change_percentage=24h,7d"
+    try:
+        resp = requests.get(url, timeout=10)
+        if resp.status_code != 200:
+            return None, f"API返回错误，状态码：{resp.status_code}"
+            
+        data = resp.json()
+        if not isinstance(data, list) or len(data) == 0:
+            return None, "API返回数据为空"
+            
+        item = data[0]
+        if "current_price" not in item:
+            return None, "找不到该币种"
+
+        price_usd = item["current_price"]
+        price_cny = price_usd * cny_rate
+        
+        change_24h = item.get("price_change_percentage_24h")
+        change_7d = item.get("price_change_percentage_7d_in_currency")
+        
+        return {
+            "price_usd": price_usd,
+            "price_cny": price_cny,
+            "change_24h": change_24h,
+            "change_7d": change_7d
+        }, None
+        
+    except Exception as e:
+        print(f"CoinGecko 请求异常: {e}")
+        return None, f"网络请求异常: {e}"
 
 def reply_crypto(chat_id, symbol):
     data, err = get_crypto_data(symbol)
@@ -92,16 +88,18 @@ def reply_crypto(chat_id, symbol):
         print(f"查询 {symbol} 失败: {err}")
         return
 
-    # 处理极小价格（如 SHIB），动态调整小数位数
     price_usd = data['price_usd']
     price_cny = data['price_cny']
-    
+    c24 = data['change_24h']
+    c7 = data['change_7d']
+
+    # 处理极小价格（如 SHIB），动态调整小数位数
     if price_usd < 0.01:
         usd_str = f"${price_usd:,.8f}"
-        cny_str = f"¥{price_cny:,.8f}" if price_cny else "¥ --"
+        cny_str = f"¥{price_cny:,.8f}"
     else:
         usd_str = f"${price_usd:,.4f}"
-        cny_str = f"¥{price_cny:,.4f}" if price_cny else "¥ --"
+        cny_str = f"¥{price_cny:,.4f}"
 
     msg = f"📊 {symbol} 行情\n"
     msg += "━━━━━━━━━━━━\n"
@@ -109,30 +107,29 @@ def reply_crypto(chat_id, symbol):
     msg += f"🇨🇳 价格：{cny_str}\n"
     msg += "━━━━━━━━━━━━\n"
     
-    c24 = data['change_24h']
     if c24 is not None:
         arrow_24 = "📈" if c24 >= 0 else "📉"
         msg += f"{arrow_24} 24h涨跌：{c24:+.2f}%\n"
         
-    c7 = data['change_7d']
     if c7 is not None:
         arrow_7 = "📈" if c7 >= 0 else "📉"
         msg += f"{arrow_7} 7d涨跌：{c7:+.2f}%"
+    else:
+        msg += "7d涨跌：获取失败"
         
     send_message(chat_id, msg)
 
 def handle_message(chat_id, text):
     raw_text = text.strip()
     
-    # 严格按照要求：只处理 "币种名称+." 格式，例如 btc. / ETH.
-    # 不区分大小写
+    # 严格依照你的要求：仅处理 "币种名称+." 格式，不区分大小写
     if raw_text.endswith("."):
         symbol = raw_text[:-1].upper()
         if symbol.isalpha() and 2 <= len(symbol) <= 10:
             reply_crypto(chat_id, symbol)
             return
     
-    # 其他所有消息（包括 /start, /help, 聊天文字等），直接静默忽略，不回复任何内容
+    # 其他所有消息一律沉默，不回复任何教程或提示
     return
 
 def main():
@@ -154,3 +151,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
