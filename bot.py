@@ -40,7 +40,7 @@ def send_message(chat_id, text):
 def gen_sign(method, url, query_string=None, payload_string=None):
     key = GATE_API_KEY
     secret = GATE_API_SECRET
-    # 🔥 最关键的一行：必须使用 int 转成纯整数秒级时间戳！
+    # 强制使用整数秒级时间戳（修复浮点数导致签名失败的问题）
     t = str(int(time.time()))
     
     m = hashlib.sha512()
@@ -49,7 +49,9 @@ def gen_sign(method, url, query_string=None, payload_string=None):
     
     s = '%s\n%s\n%s\n%s\n%s' % (method, url, query_string or "", hashed_payload, t)
     
+    # 调试打印：确认签名URL是否正确
     print(f"=== 调试信息 ===")
+    print(f"Sign URL: {url}")
     print(f"SignString:\n{s}")
     print(f"=================")
     
@@ -57,10 +59,15 @@ def gen_sign(method, url, query_string=None, payload_string=None):
     return {'KEY': key, 'Timestamp': t, 'SIGN': sign}
 
 def gate_request(method, endpoint, params=None, body=None):
+    # 签名用的路径：必须是 API 路径本身，不能包含 /api/v4 前缀
+    sign_path = endpoint
+    # 实际请求的 URL
+    full_url = f"{GATE_BASE_URL}{endpoint}"
+    
     query_string = urlencode(params) if params else ""
     payload_string = body if body else ""
     
-    sign_headers = gen_sign(method, endpoint, query_string, payload_string)
+    sign_headers = gen_sign(method, sign_path, query_string, payload_string)
     
     headers = {
         "Accept": "application/json",
@@ -71,9 +78,7 @@ def gate_request(method, endpoint, params=None, body=None):
     }
     
     if query_string:
-        full_url = f"{GATE_BASE_URL}{endpoint}?{query_string}"
-    else:
-        full_url = f"{GATE_BASE_URL}{endpoint}"
+        full_url += f"?{query_string}"
     
     try:
         if method == "GET":
