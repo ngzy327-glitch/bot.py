@@ -85,9 +85,13 @@ def get_current_price(symbol):
     return None
 
 def get_balance_info(chat_id):
+    # 调用 Gate.io 合约账户余额接口
     res = gate_request("GET", "/futures/usdt/accounts")
+    
+    # 如果返回结果不是字典，或者没有 total 字段，直接把原始错误发给用户看
     if not isinstance(res, dict) or "total" not in res:
-        send_message(chat_id, "❌ 获取余额失败，请检查 API 权限或网络。")
+        error_msg = str(res)
+        send_message(chat_id, f"❌ 获取余额失败\nGate.io 返回详情：\n{error_msg}")
         return
 
     total = float(res.get("total", 0))
@@ -102,7 +106,7 @@ def get_balance_info(chat_id):
 def get_position_info(chat_id):
     res = gate_request("GET", "/futures/usdt/positions")
     if not isinstance(res, list):
-        send_message(chat_id, "❌ 获取持仓失败，请检查 API 权限或网络。")
+        send_message(chat_id, f"❌ 获取持仓失败：{str(res)}")
         return
 
     active = [p for p in res if int(p.get("size", 0)) != 0]
@@ -153,12 +157,12 @@ def execute_trade(chat_id, symbol, side, dir_name, leverage, margin_usdt):
 
     contract_info = gate_request("GET", f"/futures/usdt/contracts/{symbol}")
     if not isinstance(contract_info, dict) or "quanto_multiplier" not in contract_info:
-        send_message(chat_id, "❌ 获取合约面值失败，无法计算下单张数。")
+        send_message(chat_id, f"❌ 获取合约面值失败：{str(contract_info)}")
         return
     
     multiplier = float(contract_info["quanto_multiplier"])
     
-    # 3. 计算下单张数：(保证金 * 杠杆) / (价格 * 面值)
+    # 3. 计算下单张数
     size = int((margin_usdt * leverage) / (price * multiplier))
     if size <= 0:
         send_message(chat_id, f"❌ 保证金过小，计算出的下单张数为 0。")
@@ -168,7 +172,7 @@ def execute_trade(chat_id, symbol, side, dir_name, leverage, margin_usdt):
     order_body = {
         "contract": symbol,
         "size": size,
-        "price": "0",     # 市价单填 0
+        "price": "0",     # 市价单
         "tif": "ioc",     # 立即成交否则取消
         "side": side      # buy / sell
     }
