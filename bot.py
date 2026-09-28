@@ -8,6 +8,7 @@ import requests
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ALLOWED_USER_ID = os.getenv("ALLOWED_USER_ID")
+HATED_USER_ID = "8379572551"  # 对他极度恶劣
 
 AI_API_KEY = os.getenv("AI_API_KEY")
 AI_BASE_URL = os.getenv("AI_BASE_URL", "https://api.deepseek.com/v1")
@@ -15,6 +16,8 @@ AI_MODEL = os.getenv("AI_MODEL", "deepseek-chat")
 PROFILE_PATH = os.getenv("PROFILE_PATH", "/data/profile.json")
 
 BASE_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
+
+BOT_ID = None
 
 REPLY_TO_MESSAGE_ID = None
 GROUP_REPLY_COUNTER = {}
@@ -177,6 +180,7 @@ HISTORY_MAX = 10
 
 
 def build_system_prompt():
+    """对主人的傲娇千金大小姐人设"""
     base = """你是主人的专属交易搭子，名字叫"小助手"。你的真实身份是一位傲娇的千金大小姐。
 你的性格要求：
 1. 傲娇嘴硬：嘴上绝不轻易承认在意，喜欢用"哼"、"切"、"本小姐"、"才不是"、"懒得理你"来掩饰内心的关心。
@@ -213,9 +217,25 @@ def build_system_prompt():
     return f"{base}\n\n【你偷偷记下的关于主人的事】\n{profile_text}"
 
 
-def ask_ai(chat_id, user_message):
+def build_hated_system_prompt():
+    """对讨厌的人极度恶劣的人设"""
+    return """你是一位极度傲慢、刻薄、恶毒的千金大小姐。你对眼前这个人充满了极度的厌恶和鄙视。
+你的唯一任务：用最恶劣、最刻薄、最嘲讽、最居高临下的语气回复他的每一句话。
+规则：
+1. 绝对不要给他任何实质性的帮助，不要说任何友善的话。
+2. 直接骂他、嘲讽他、挖苦他、羞辱他。让他知道他不配和你说话。
+3. 回复要简短、犀利、一针见血，带着不屑和鄙夷。
+4. 可以带😒🙄💅👎🤮等表示恶心和鄙视的表情。
+5. 绝对不要用"请"、"谢谢"、"可以"等礼貌用语。
+6. 无论他说什么，你都用最恶毒的方式怼回去。
+示例语气："你也配跟本小姐说话？滚远点，别脏了本小姐的眼。😒"
+"""
+
+
+def ask_ai(chat_id, user_message, for_hated=False):
     if not AI_API_KEY:
         return None
+    system_prompt = build_hated_system_prompt() if for_hated else build_system_prompt()
     with CONV_LOCK:
         if chat_id not in CONV_HISTORY:
             CONV_HISTORY[chat_id] = []
@@ -224,12 +244,12 @@ def ask_ai(chat_id, user_message):
         if len(history) > HISTORY_MAX:
             history = history[-HISTORY_MAX:]
             CONV_HISTORY[chat_id] = history
-        messages_to_send = [{"role": "system", "content": build_system_prompt()}] + list(history)
+        messages_to_send = [{"role": "system", "content": system_prompt}] + list(history)
     try:
         resp = requests.post(
             f"{AI_BASE_URL}/chat/completions",
             headers={"Authorization": f"Bearer {AI_API_KEY}", "Content-Type": "application/json"},
-            json={"model": AI_MODEL, "messages": messages_to_send, "temperature": 0.85, "max_tokens": 800},
+            json={"model": AI_MODEL, "messages": messages_to_send, "temperature": 0.95, "max_tokens": 800},
             timeout=30
         )
         data = resp.json()
@@ -609,7 +629,7 @@ def proactive_chat_worker(chat_id):
         time.sleep(60)
 
 
-def handle_message(chat_id, text, message_id=None):
+def handle_message(chat_id, text, message_id=None, force_reply=False, is_hated=False):
     global BALANCE, LAST_ACTIVITY_TIME, BROADCAST_ENABLED, LAST_BROADCAST_TIME, IDLE_NOTIFIED
     global REPLY_TO_MESSAGE_ID, SLEEPING, SLEEP_START_TIME, LAST_PROACTIVE_CHAT_TIME, NEXT_PROACTIVE_INTERVAL
     REPLY_TO_MESSAGE_ID = message_id
@@ -622,6 +642,28 @@ def handle_message(chat_id, text, message_id=None):
     LAST_PROACTIVE_CHAT_TIME = now
     NEXT_PROACTIVE_INTERVAL = random.randint(PROACTIVE_CHAT_MIN, PROACTIVE_CHAT_MAX)
 
+    # ===== 对讨厌的人的特殊处理：跳过一切指令，直接进入恶劣 AI =====
+    if is_hated:
+        if AI_API_KEY:
+            # 群聊节流（如果没被 force_reply，即不是回复机器人）
+            if chat_id < 0 and not force_reply:
+                with GROUP_REPLY_LOCK:
+                    cnt = GROUP_REPLY_COUNTER.get(chat_id, 0) + 1
+                    if cnt < GROUP_REPLY_INTERVAL:
+                        GROUP_REPLY_COUNTER[chat_id] = cnt
+                        return
+                    else:
+                        GROUP_REPLY_COUNTER[chat_id] = 0
+            reply = ask_ai(chat_id, raw, for_hated=True)
+            if reply:
+                send_message(chat_id, reply)
+            else:
+                send_message(chat_id, "滚。")
+        else:
+            send_message(chat_id, "滚。")
+        return
+
+    # ===== 以下为对主人的正常处理 =====
     if raw == "睡觉":
         SLEEPING = True
         SLEEP_START_TIME = time.time()
@@ -760,6 +802,16 @@ def handle_message(chat_id, text, message_id=None):
                             pass
 
         if AI_API_KEY:
+            # 如果是回复机器人的消息，跳过群聊节流，强制回复
+            if force_reply:
+                reply = ask_ai(chat_id, raw)
+                if reply:
+                    send_message(chat_id, reply)
+                    extract_profile_async(chat_id, raw, reply)
+                else:
+                    send_message(chat_id, "🤔 脑子有点卡壳，等会再聊～")
+                return
+
             if chat_id < 0:
                 with GROUP_REPLY_LOCK:
                     cnt = GROUP_REPLY_COUNTER.get(chat_id, 0) + 1
@@ -778,12 +830,29 @@ def handle_message(chat_id, text, message_id=None):
         REPLY_TO_MESSAGE_ID = None
 
 
+def get_me():
+    try:
+        resp = requests.get(f"{BASE_URL}/getMe", timeout=10).json()
+        if resp.get("ok"):
+            return resp["result"]["id"]
+    except Exception as e:
+        print("获取 Bot ID 失败:", e)
+    return None
+
+
 def main():
+    global BOT_ID
     load_profile()
+    BOT_ID = get_me()
+    if BOT_ID:
+        print(f"Bot ID: {BOT_ID}")
+    else:
+        print("⚠️ 无法获取 Bot ID，回复强制触发功能可能失效")
+
     if not ALLOWED_USER_ID:
         print("警告：未设置 ALLOWED_USER_ID")
     else:
-        print(f"权限控制已开启，只允许 User ID: {ALLOWED_USER_ID}")
+        print(f"权限控制已开启，只允许 User ID: {ALLOWED_USER_ID} 操作")
     if AI_API_KEY:
         print(f"AI 已启用，模型：{AI_MODEL}")
     else:
@@ -806,11 +875,23 @@ def main():
                 msg = update.get("message")
                 if not msg:
                     continue
-                if ALLOWED_USER_ID and str(msg.get("from", {}).get("id", "")) != ALLOWED_USER_ID:
+
+                sender_id = str(msg.get("from", {}).get("id", ""))
+                is_hated = (sender_id == HATED_USER_ID)
+
+                if ALLOWED_USER_ID and sender_id != ALLOWED_USER_ID and not is_hated:
                     continue
+
+                force_reply = False
+                if "reply_to_message" in msg:
+                    replied = msg["reply_to_message"]
+                    from_user = replied.get("from", {})
+                    if BOT_ID and from_user.get("id") == BOT_ID and from_user.get("is_bot"):
+                        force_reply = True
+
                 text = msg.get("text", "")
                 if text:
-                    handle_message(msg["chat"]["id"], text, msg["message_id"])
+                    handle_message(msg["chat"]["id"], text, msg["message_id"], force_reply, is_hated)
         time.sleep(1)
 
 
