@@ -16,7 +16,7 @@ BALANCE = 1000.0
 POSITIONS = []
 POS_LOCK = threading.Lock()
 
-TRADE_HISTORY = [] # 战绩记录
+TRADE_HISTORY = []
 HISTORY_LOCK = threading.Lock()
 
 LST = []
@@ -134,14 +134,11 @@ def get_position_info(chat_id):
         send_message(chat_id, msg)
 
 def get_trade_history(chat_id):
-    """生成盈亏报表"""
     with HISTORY_LOCK:
         history = list(TRADE_HISTORY)
-    
     if not history:
         send_message(chat_id, "📭 暂无历史交易记录。")
         return
-
     total_trades = len(history)
     total_pnl = sum(t["pnl"] for t in history)
     win_trades = [t for t in history if t["pnl"] > 0]
@@ -149,10 +146,8 @@ def get_trade_history(chat_id):
     win_count = len(win_trades)
     loss_count = len(loss_trades)
     win_rate = (win_count / total_trades) * 100 if total_trades > 0 else 0
-    
     avg_win = sum(t["pnl"] for t in win_trades) / win_count if win_count > 0 else 0
     avg_loss = sum(t["pnl"] for t in loss_trades) / loss_count if loss_count > 0 else 0
-
     msg = f"📈 战绩报表\n"
     msg += "━━━━━━━━━━━━\n"
     msg += f"总交易次数：{total_trades} 次\n"
@@ -188,7 +183,8 @@ def open_position(chat_id, symbol, side, dir_name, leverage, margin_usdt):
             "leverage": leverage,
             "margin": margin_usdt,
             "entry_price": price,
-            "qty": qty
+            "qty": qty,
+            "chat_id": chat_id
         })
     msg = f"✅ 开仓成功！\n"
     msg += f"币种：{symbol.upper()}\n"
@@ -222,15 +218,12 @@ def close_position(chat_id, symbol):
         return_amount = pos["margin"] + pnl
         BALANCE += return_amount
         POSITIONS.remove(pos)
-        
-        # 记录战绩
         with HISTORY_LOCK:
             TRADE_HISTORY.append({
                 "symbol": symbol,
                 "side": pos["side"],
                 "pnl": pnl
             })
-            
     msg = f"✅ 平仓成功！\n"
     msg += f"币种：{symbol}\n"
     msg += f"方向：{pos['side']}\n"
@@ -240,8 +233,55 @@ def close_position(chat_id, symbol):
     msg += f"返还金额：{return_amount:,.2f} USDT"
     send_message(chat_id, msg)
 
+def trigger_liquidation(symbol, price, pos):
+    """触发爆仓"""
+    with POS_LOCK:
+        if pos in POSITIONS:
+            POSITIONS.remove(pos)
+    with HISTORY_LOCK:
+        TRADE_HISTORY.append({
+            "symbol": symbol,
+            "side": pos["side"],
+            "pnl": -pos["margin"]
+        })
+    if pos["side"] == "多":
+        liq_price = pos["entry_price"] * (1 - 1 / pos["leverage"])
+    else:
+        liq_price = pos["entry_price"] * (1 + 1 / pos["leverage"])
+    msg = f"🔔菜狗你仓位炸了\n"
+    msg += "━━━━━━━━━━━━\n"
+    msg += f"币种：{symbol}\n"
+    msg += f"方向：{pos['side']}\n"
+    msg += f"开仓价：${pos['entry_price']:,.4f}\n"
+    msg += f"爆仓价：${liq_price:,.4f}\n"
+    msg += f"爆仓价格：${price:,.4f}\n"
+    msg += f"损失保证金：{pos['margin']:,.2f} USDT"
+    send_message(pos["chat_id"], msg)
+
+def liquidation_checker():
+    """爆仓检查线程，每5秒检查一次"""
+    print("爆仓检查线程已启动...")
+    while True:
+        try:
+            with POS_LOCK:
+                current_positions = list(POSITIONS)
+            for pos in current_positions:
+                price = get_current_price(pos["symbol"])
+                if price is None:
+                    continue
+                if pos["side"] == "多":
+                    liq_price = pos["entry_price"] * (1 - 1 / pos["leverage"])
+                    if price <= liq_price:
+                        trigger_liquidation(pos["symbol"], price, pos)
+                else:
+                    liq_price = pos["entry_price"] * (1 + 1 / pos["leverage"])
+                    if price >= liq_price:
+                        trigger_liquidation(pos["symbol"], price, pos)
+        except Exception as e:
+            print(f"爆仓检查异常: {e}")
+        time.sleep(5)
+
 def withdraw_balance(chat_id, amount_str):
-    """提现处理"""
     global BALANCE
     try:
         amount = float(amount_str)
@@ -293,7 +333,7 @@ def handle_message(chat_id, text):
     global BALANCE
     raw_text = text.strip()
 
-    # 1. 行情查询：支持 btc. 或 btc。 (中英文句号)
+    # 1. 行情查询
     if raw_text.endswith(".") or raw_text.endswith("。"):
         symbol = raw_text[:-1].strip().upper()
         if symbol.isalpha() and 2 <= len(symbol) <= 10:
@@ -312,7 +352,7 @@ def handle_message(chat_id, text):
                 send_message(chat_id, msg)
         return
 
-    # 2. 监听指令：监听btc3400
+    # 2. 监听指令
     listen_match = re.match(r'^监听\s*([a-zA-Z]+)\s*([0-9.]+)$', raw_text)
     if listen_match:
         symbol_str = listen_match.group(1).upper()
@@ -342,7 +382,7 @@ def handle_message(chat_id, text):
         get_balance_info(chat_id)
         return
 
-    # 4. 充值指令
+    # 4. 充值
     recharge_match = re.match(r'^充值\s*([0-9.]+)$', raw_text)
     if recharge_match:
         try:
@@ -354,13 +394,13 @@ def handle_message(chat_id, text):
             pass
         return
 
-    # 5. 提现指令：提现100
+    # 5. 提现
     withdraw_match = re.match(r'^提现\s*([0-9.]+)$', raw_text)
     if withdraw_match:
         withdraw_balance(chat_id, withdraw_match.group(1))
         return
 
-    # 6. 战绩查询
+    # 6. 战绩
     if raw_text == "战绩":
         get_trade_history(chat_id)
         return
@@ -370,13 +410,13 @@ def handle_message(chat_id, text):
         get_position_info(chat_id)
         return
 
-    # 8. 平仓指令
+    # 8. 平仓
     close_match = re.match(r'^平仓\s*([a-zA-Z]+)$', raw_text)
     if close_match:
         close_position(chat_id, close_match.group(1))
         return
 
-    # 9. 开仓指令
+    # 9. 开仓
     normalized_text = raw_text.replace("，", ",").replace(" ", ",")
     parts = [p for p in normalized_text.split(",") if p]
     if len(parts) == 4:
@@ -411,8 +451,10 @@ def main():
         print("警告：未设置 ALLOWED_USER_ID，机器人将对所有人开放！")
     else:
         print(f"权限控制已开启，只允许 User ID: {ALLOWED_USER_ID} 操作。")
-    t = threading.Thread(target=price_monitor_worker, daemon=True)
-    t.start()
+    t1 = threading.Thread(target=price_monitor_worker, daemon=True)
+    t1.start()
+    t2 = threading.Thread(target=liquidation_checker, daemon=True)
+    t2.start()
     print("Bot 已启动...")
     offset = None
     while True:
