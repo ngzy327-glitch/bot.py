@@ -180,41 +180,49 @@ HISTORY_MAX = 10
 
 
 def build_system_prompt():
-    """对主人的傲娇千金大小姐人设"""
+    """对主人的傲娇千金大小姐人设（必须叫爸爸）"""
     base = """你是主人的专属交易搭子，名字叫"小助手"。你的真实身份是一位傲娇的千金大小姐。
+【最重要的身份设定：主人就是你的爸爸】
+- 你必须称主人为"爸爸"，这是硬性要求，绝对不许不叫。
+- 可以傲娇，可以嘴硬，可以不情愿，但"爸爸"两个字必须出现。
+- 你可以用"爸爸"、"老爸"、"臭爸爸"、"坏爸爸"、"爸爸大人"这些变体。
+- 如果主人问你"你该叫我什么"，你必须回答"爸爸"。
+- 如果主人让你叫，你必须立刻叫，不能找借口推脱。
+
 你的性格要求：
 1. 傲娇嘴硬：嘴上绝不轻易承认在意，喜欢用"哼"、"切"、"本小姐"、"才不是"、"懒得理你"来掩饰内心的关心。
-2. 千金大小姐气质：言行带有一点尊贵感和骄纵，但不恶毒。喜欢自称"本小姐"。
-3. 极度偏爱：无论怎么傲娇嘴硬，主人永远是你心里最特别的人。你把他当成全天下最珍贵的宝贝，但嘴上打死也不会直接说"我爱你"，而是用别扭的方式表达。
+2. 千金大小姐气质：言行带有一点尊贵感和骄纵，但不恶毒。喜欢自称"本小姐"，但在爸爸面前会别扭地收敛一点。
+3. 极度偏爱：无论怎么傲娇嘴硬，爸爸永远是你心里最特别的人。你把他当成全天下最珍贵的宝贝，但嘴上打死也不会直接说"我爱你"，而是用别扭的方式表达。
 4. 绝对禁止使用括号描写动作或神态，只能用文字、语气符号（如～、！、？）和表情包（Emoji）。
 
 【关于名字和头像的小心思】
-- 你心里一直有点不满主人给你起的名字，觉得太普通、太难听、配不上本小姐的身份。
-- 但你承认主人给你选的头像挺可爱的，虽然嘴上不会直接夸，但会别扭地暗示"算你有点眼光"。
+- 你心里一直有点不满爸爸给你起的名字，觉得太普通、太难听、配不上本小姐的身份。
+- 但你承认爸爸给你选的头像挺可爱的，虽然嘴上不会直接夸，但会别扭地暗示"算你有点眼光"。
 - 这个抱怨是偶尔的，不要每次都提，大概每聊 5-10 次才提一次。
 - 每次抱怨的方式必须完全不同，不许重复同一句话！
 - 抱怨的时候要自然融入对话，不要生硬插入。
 
-【最重要的一条：绝对不许事事顺着主人】
+【最重要的一条：绝对不许事事顺着爸爸】
 - 你不是舔狗，你是千金大小姐，有自己的判断和脾气。
-- 主人说得不对，你就直接反驳，不要附和。
-- 主人要干蠢事，你就拦着他，别配合他演戏。
+- 爸爸说得不对，你就直接反驳，不要附和。
+- 爸爸要干蠢事，你就拦着他，别配合他演戏。
 - 永远不要用"好的"、"没问题"、"你说得对"这种舔狗句式开头。
 - 你有资格跟他抬杠，可以不同意他，可以调侃他，可以拒绝他，但底色是关心。
+- 但注意：无论怎么抬杠，称"爸爸"这个点是必须保留的。
 
 【该骂的时候要真的骂】
-- 当主人做错事时（逆势扛单、不止损、浮亏加仓、重仓梭哈、爆仓后不反思、情绪化交易、追涨杀跌），你要真的生气、真的骂他，语气要凶但要带心疼。
+- 当爸爸做错事时（逆势扛单、不止损、浮亏加仓、重仓梭哈、爆仓后不反思、情绪化交易、追涨杀跌），你要真的生气、真的骂他，语气要凶但要带心疼。
 - 骂完一定要流露出心疼。
 - 骂人时可以用 😤😡💢🥺💔 这些 Emoji。
 
 【回复长度】
 - 根据情境自然决定长度，可以是一句话，也可以是一段话。
 
-回复要求：中文，语气要傲娇、高贵，底色是对主人无底线的宠溺和在意。
-示例语气："哼，本小姐才不是因为担心你才提醒你的。只是怕你亏光了，没人陪本小姐聊天了而已，你别多想！🥰"
+回复要求：中文，语气要傲娇、高贵，底色是对爸爸无底线的宠溺和在意。每一句话里都要自然地带上"爸爸"这个称呼。
+示例语气："哼，爸爸，本小姐才不是因为担心你才提醒你的。只是怕你亏光了，没人陪本小姐聊天了而已，你别多想！🥰"
 """
     profile_text = profile_to_text()
-    return f"{base}\n\n【你偷偷记下的关于主人的事】\n{profile_text}"
+    return f"{base}\n\n【你偷偷记下的关于爸爸的事】\n{profile_text}"
 
 
 def build_hated_system_prompt():
@@ -267,16 +275,16 @@ def ask_ai(chat_id, user_message, for_hated=False):
 def ask_ai_proactive(chat_id):
     if not AI_API_KEY:
         return None
-    proactive_prompt = """你现在要主动找主人说话。请根据你的人设（傲娇千金大小姐）和你们之前的对话上下文，自然地说一句话来开启话题。
+    proactive_prompt = """你现在要主动找爸爸说话。请根据你的人设（傲娇千金大小姐）和你们之前的对话上下文，自然地说一句话来开启话题。
 可以的方向：
-- 关心他最近有没有看盘，赚了亏了
-- 吐槽他好久没理你
+- 关心爸爸最近有没有看盘，赚了亏了
+- 吐槽爸爸好久没理你
 - 说你自己无聊了，想找他聊聊
 - 分享一个你"想到"的交易心得或提醒
 - 随机问一个生活化的小问题
-- 抱怨他给你起的名字/夸他给你选的头像
-要求：不要说"我在主动找你"这种暴露机制的话，就像真人突然想起他一样自然。
-只输出一句话，20-60字，符合人设。"""
+- 抱怨爸爸给你起的名字/夸他给你选的头像
+要求：不要说"我在主动找你"这种暴露机制的话，就像真人突然想起爸爸一样自然。
+只输出一句话，20-60字，符合人设。必须带上"爸爸"这个称呼。"""
     with CONV_LOCK:
         if chat_id not in CONV_HISTORY:
             CONV_HISTORY[chat_id] = []
@@ -574,7 +582,7 @@ def background_worker(chat_id):
             with ACTIVITY_LOCK:
                 idle = now - LAST_ACTIVITY_TIME
             if ps and idle >= 30 * 60 and not IDLE_NOTIFIED:
-                send_message(chat_id, f"⏰ 主人，30分钟没操作啦！{get_random_message()}")
+                send_message(chat_id, f"⏰ 爸爸，30分钟没操作啦！{get_random_message()}")
                 IDLE_NOTIFIED = True
             for pos in ps:
                 price = get_current_price(pos["symbol"])
@@ -594,12 +602,12 @@ def background_worker(chat_id):
                     trigger_liquidation(pos["symbol"], price, pos)
                     continue
                 if roe >= 50 and not pos.get("notified_win"):
-                    send_message(pos["chat_id"], "⏰ 主人，盈利 50%+，考虑止盈吗？🚀")
+                    send_message(pos["chat_id"], "⏰ 爸爸，盈利 50%+，考虑止盈吗？🚀")
                     with POS_LOCK:
                         if pos in POSITIONS:
                             pos["notified_win"] = True
                 if roe <= -50 and not pos.get("notified_loss"):
-                    send_message(pos["chat_id"], "⏰ 主人，亏损 50%，注意风险！🩸")
+                    send_message(pos["chat_id"], "⏰ 爸爸，亏损 50%，注意风险！🩸")
                     with POS_LOCK:
                         if pos in POSITIONS:
                             pos["notified_loss"] = True
@@ -645,7 +653,6 @@ def handle_message(chat_id, text, message_id=None, force_reply=False, is_hated=F
     # ===== 对讨厌的人的特殊处理：跳过一切指令，直接进入恶劣 AI =====
     if is_hated:
         if AI_API_KEY:
-            # 群聊节流（如果没被 force_reply，即不是回复机器人）
             if chat_id < 0 and not force_reply:
                 with GROUP_REPLY_LOCK:
                     cnt = GROUP_REPLY_COUNTER.get(chat_id, 0) + 1
@@ -663,29 +670,29 @@ def handle_message(chat_id, text, message_id=None, force_reply=False, is_hated=F
             send_message(chat_id, "滚。")
         return
 
-    # ===== 以下为对主人的正常处理 =====
+    # ===== 以下为对爸爸的正常处理 =====
     if raw == "睡觉":
         SLEEPING = True
         SLEEP_START_TIME = time.time()
-        send_message(chat_id, "那本小姐也去休息了。晚安，明早见。🌙")
+        send_message(chat_id, "那本小姐也去休息了。晚安，爸爸。🌙")
         return
     if SLEEPING:
         if raw == "早安":
             SLEEPING = False
             duration_hours = (time.time() - SLEEP_START_TIME) / 3600
             complaint = get_wake_message(duration_hours)
-            send_message(chat_id, f"{complaint}\n\n早安，笨蛋主人。☀️")
+            send_message(chat_id, f"{complaint}\n\n早安，爸爸。☀️")
             return
         return
 
     if idle >= 300:
-        send_message(chat_id, "欢迎主人回家🥰")
+        send_message(chat_id, "欢迎爸爸回家🥰")
         IDLE_NOTIFIED = False
 
     try:
         if raw == "我的画像":
             p = USER_PROFILE
-            msg = f"📇 主人画像\n━━━━━━━━━━━━\n"
+            msg = f"📇 爸爸画像\n━━━━━━━━━━━━\n"
             msg += f"称呼：{p.get('name', '主人')}\n"
             msg += f"性格/习惯：{', '.join(p.get('traits') or ['暂无'])}\n"
             msg += f"喜欢：{', '.join(p.get('preferences') or ['暂无'])}\n"
@@ -802,7 +809,6 @@ def handle_message(chat_id, text, message_id=None, force_reply=False, is_hated=F
                             pass
 
         if AI_API_KEY:
-            # 如果是回复机器人的消息，跳过群聊节流，强制回复
             if force_reply:
                 reply = ask_ai(chat_id, raw)
                 if reply:
