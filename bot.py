@@ -1,20 +1,20 @@
 import os
 import re
 import time
-import json
 import threading
 import requests
-import hmac
-import hashlib
-from urllib.parse import urlencode
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-GATE_API_KEY = os.getenv("GATE_API_KEY")
-GATE_API_SECRET = os.getenv("GATE_API_SECRET")
-GATE_BASE_URL = os.getenv("GATE_BASE_URL", "https://api-testnet.gateapi.io/api/v4")
 ALLOWED_USER_ID = os.getenv("ALLOWED_USER_ID")
 
 BASE_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
+
+# ==========================
+# 本地模拟账户数据
+# ==========================
+BALANCE = 1000.0   # 初始资金 1000 USDT
+POSITIONS = []     # 当前持仓
+POS_LOCK = threading.Lock()
 
 LST = []
 LST_LOCK = threading.Lock()
@@ -37,184 +37,187 @@ def send_message(chat_id, text):
     except Exception as e:
         print("发送消息失败:", e)
 
-def gen_sign(method, url, query_string=None, payload_string=None):
-    key = GATE_API_KEY
-    secret = GATE_API_SECRET
-    # 强制使用整数秒级时间戳（修复浮点数导致签名失败的问题）
-    t = str(int(time.time()))
-    
-    m = hashlib.sha512()
-    m.update((payload_string or "").encode('utf-8'))
-    hashed_payload = m.hexdigest()
-    
-    s = '%s\n%s\n%s\n%s\n%s' % (method, url, query_string or "", hashed_payload, t)
-    
-    # 调试打印：确认签名URL是否正确
-    print(f"=== 调试信息 ===")
-    print(f"Sign URL: {url}")
-    print(f"SignString:\n{s}")
-    print(f"=================")
-    
-    sign = hmac.new(secret.encode('utf-8'), s.encode('utf-8'), hashlib.sha512).hexdigest()
-    return {'KEY': key, 'Timestamp': t, 'SIGN': sign}
-
-def gate_request(method, endpoint, params=None, body=None):
-    # 签名用的路径：必须是 API 路径本身，不能包含 /api/v4 前缀
-    sign_path = endpoint
-    # 实际请求的 URL
-    full_url = f"{GATE_BASE_URL}{endpoint}"
-    
-    query_string = urlencode(params) if params else ""
-    payload_string = body if body else ""
-    
-    sign_headers = gen_sign(method, sign_path, query_string, payload_string)
-    
-    headers = {
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-        "KEY": sign_headers["KEY"],
-        "Timestamp": sign_headers["Timestamp"],
-        "SIGN": sign_headers["SIGN"],
-    }
-    
-    if query_string:
-        full_url += f"?{query_string}"
-    
-    try:
-        if method == "GET":
-            resp = requests.get(full_url, headers=headers, timeout=10)
-        elif method == "POST":
-            resp = requests.post(full_url, headers=headers, data=payload_string, timeout=10)
-        else:
-            return None
-        return resp.json()
-    except Exception as e:
-        print(f"Gate.io 请求异常: {e}")
-        return None
-
 def get_current_price(symbol):
+    """使用 OKX 公开行情接口获取价格，无需 API Key"""
+    inst_id = f"{symbol.upper()}-USDT"
     try:
-        resp = requests.get(f"{GATE_BASE_URL}/futures/usdt/tickers?contract={symbol}", timeout=5).json()
-        if isinstance(resp, list) and len(resp) > 0:
-            return float(resp[0]["last"])
-    except:
-        pass
+        url = f"https://www.okx.com/api/v5/market/ticker?instId={inst_id}"
+        resp = requests.get(url, timeout=5).json()
+        if resp.get("code") == "0" and resp.get("data"):
+            return float(resp["data"][0]["last"])
+    except Exception as e:
+        print(f"获取 {symbol} 行情失败: {e}")
     return None
 
 def get_balance_info(chat_id):
-    res = gate_request("GET", "/futures/usdt/accounts")
-    if not isinstance(res, dict) or "total" not in res:
-        error_msg = str(res)
-        send_message(chat_id, f"❌ 获取余额失败\nGate.io 返回详情：\n{error_msg}")
-        return
-    total = float(res.get("total", 0))
-    available = float(res.get("available", 0))
-    msg = f"💰 合约账户余额\n"
+    """查询余额"""
+    total_pnl = 0.0
+    with POS_LOCK:
+        current_positions = list(POSITIONS)
+    
+    for pos in current_positions:
+        price = get_current_price(pos["symbol"])
+        if price:
+            if pos["side"] == "多":
+                pnl = (price - pos["entry_price"]) * pos["qty"]
+            else:
+                pnl = (pos["entry_price"] - price) * pos["qty"]
+            total_pnl += pnl
+
+    msg = f"💰 模拟账户余额\n"
     msg += "━━━━━━━━━━━━\n"
-    msg += f"总金额：{total:,.2f} USDT\n"
-    msg += f"可用余额：{available:,.2f} USDT"
+    msg += f"可用资金：{BALANCE:,.2f} USDT\n"
+    msg += f"未实现盈亏：{total_pnl:+,.2f} USDT\n"
+    msg += f"总权益：{BALANCE + total_pnl:,.2f} USDT"
     send_message(chat_id, msg)
 
 def get_position_info(chat_id):
-    res = gate_request("GET", "/futures/usdt/positions")
-    if not isinstance(res, list):
-        send_message(chat_id, f"❌ 获取持仓失败：{str(res)}")
-        return
-    active = [p for p in res if int(p.get("size", 0)) != 0]
-    if not active:
+    """查询持仓"""
+    with POS_LOCK:
+        current_positions = list(POSITIONS)
+    
+    if not current_positions:
         send_message(chat_id, "📭 当前无持仓。")
         return
-    for pos in active:
-        contract = pos["contract"]
-        size = int(pos["size"])
-        entry_price = float(pos.get("entry_price", 0))
-        mark_price = float(pos.get("mark_price", 0))
-        leverage = pos.get("leverage", "0")
-        margin = float(pos.get("margin", 0))
-        unrealised_pnl = float(pos.get("unrealised_pnl", 0))
-        liq_price = float(pos.get("liq_price", 0))
-        roe = (unrealised_pnl / margin) * 100 if margin > 0 else 0.0
-        direction = "多 🟢" if size > 0 else "空 🔴"
-        msg = f"📊 {contract} 仓位情况\n"
+
+    for pos in current_positions:
+        price = get_current_price(pos["symbol"])
+        if not price:
+            continue
+
+        if pos["side"] == "多":
+            pnl = (price - pos["entry_price"]) * pos["qty"]
+            liq_price = pos["entry_price"] * (1 - 1 / pos["leverage"])
+        else:
+            pnl = (pos["entry_price"] - price) * pos["qty"]
+            liq_price = pos["entry_price"] * (1 + 1 / pos["leverage"])
+
+        roe = (pnl / pos["margin"]) * 100 if pos["margin"] > 0 else 0.0
+        direction = "多 🟢" if pos["side"] == "多" else "空 🔴"
+
+        msg = f"📊 {pos['symbol']} 持仓\n"
         msg += "━━━━━━━━━━━━\n"
         msg += f"方向：{direction}\n"
-        msg += f"持仓张数：{abs(size)}\n"
-        msg += f"开仓价：${entry_price:,.4f}\n"
-        msg += f"标记价：${mark_price:,.4f}\n"
+        msg += f"持仓量：{pos['qty']:.4f}\n"
+        msg += f"开仓价：${pos['entry_price']:,.4f}\n"
+        msg += f"标记价：${price:,.4f}\n"
         msg += f"爆仓价：${liq_price:,.4f}\n"
         msg += "━━━━━━━━━━━━\n"
-        msg += f"保证金：{margin:,.2f} USDT\n"
-        msg += f"杠杆：{leverage}x\n"
+        msg += f"保证金：{pos['margin']:,.2f} USDT\n"
+        msg += f"杠杆：{pos['leverage']}x\n"
         msg += f"收益率：{roe:+.2f}%\n"
-        msg += f"未实现盈亏：{unrealised_pnl:+.2f} USDT"
+        msg += f"未实现盈亏：{pnl:+,.2f} USDT"
         send_message(chat_id, msg)
 
-def execute_trade(chat_id, symbol, side, dir_name, leverage, margin_usdt):
-    lev_body = json.dumps({"leverage": str(leverage)})
-    lev_res = gate_request("POST", f"/futures/usdt/positions/{symbol}/leverage", body=lev_body)
-    if isinstance(lev_res, dict) and "leverage" not in lev_res:
-        send_message(chat_id, f"❌ 设置杠杆失败：{lev_res.get('message', '未知错误')}")
+def open_position(chat_id, symbol, side, dir_name, leverage, margin_usdt):
+    """开仓"""
+    global BALANCE
+    
+    if margin_usdt > BALANCE:
+        send_message(chat_id, f"❌ 保证金不足！当前可用：{BALANCE:,.2f} USDT")
         return
+
     price = get_current_price(symbol)
     if not price:
-        send_message(chat_id, f"❌ 找不到交易对 {symbol}，无法下单。")
+        send_message(chat_id, f"❌ 无法获取 {symbol} 行情，请检查币种。")
         return
-    contract_info = gate_request("GET", f"/futures/usdt/contracts/{symbol}")
-    if not isinstance(contract_info, dict) or "quanto_multiplier" not in contract_info:
-        send_message(chat_id, f"❌ 获取合约面值失败：{str(contract_info)}")
-        return
-    multiplier = float(contract_info["quanto_multiplier"])
-    size = int((margin_usdt * leverage) / (price * multiplier))
-    if size <= 0:
-        send_message(chat_id, f"❌ 保证金过小，计算出的下单张数为 0。")
-        return
-    order_body = {
-        "contract": symbol,
-        "size": size,
-        "price": "0",
-        "tif": "ioc",
-        "side": side
-    }
-    order_res = gate_request("POST", "/futures/usdt/orders", body=json.dumps(order_body))
-    if order_res and "id" in order_res:
-        msg = f"✅ 开仓成功！\n"
-        msg += f"币种：{symbol}\n"
-        msg += f"方向：{dir_name}\n"
-        msg += f"杠杆：{leverage}x\n"
-        msg += f"保证金：{margin_usdt:,.2f} USDT\n"
-        msg += f"张数：{size}"
-        send_message(chat_id, msg)
-    else:
-        error_msg = order_res.get("message", "未知错误") if order_res else "请求失败"
-        print(f"开仓失败: {order_res}")
-        send_message(chat_id, f"❌ 开仓失败：{error_msg}")
+
+    qty = (margin_usdt * leverage) / price
+    
+    with POS_LOCK:
+        for p in POSITIONS:
+            if p["symbol"] == symbol.upper():
+                send_message(chat_id, f"⚠️ 已有 {symbol.upper()} 持仓，请先平仓。")
+                return
+        
+        BALANCE -= margin_usdt
+        POSITIONS.append({
+            "symbol": symbol.upper(),
+            "side": dir_name,
+            "leverage": leverage,
+            "margin": margin_usdt,
+            "entry_price": price,
+            "qty": qty
+        })
+
+    msg = f"✅ 模拟开仓成功！\n"
+    msg += f"币种：{symbol.upper()}\n"
+    msg += f"方向：{dir_name}\n"
+    msg += f"杠杆：{leverage}x\n"
+    msg += f"保证金：{margin_usdt:,.2f} USDT\n"
+    msg += f"开仓价：${price:,.4f}\n"
+    msg += f"数量：{qty:.4f}"
+    send_message(chat_id, msg)
+
+def close_position(chat_id, symbol):
+    """平仓"""
+    global BALANCE
+    symbol = symbol.upper()
+
+    with POS_LOCK:
+        pos = None
+        for p in POSITIONS:
+            if p["symbol"] == symbol:
+                pos = p
+                break
+        
+        if not pos:
+            send_message(chat_id, f"📭 未找到 {symbol} 的持仓。")
+            return
+
+        price = get_current_price(symbol)
+        if not price:
+            send_message(chat_id, "❌ 无法获取行情，平仓失败。")
+            return
+
+        if pos["side"] == "多":
+            pnl = (price - pos["entry_price"]) * pos["qty"]
+        else:
+            pnl = (pos["entry_price"] - price) * pos["qty"]
+
+        return_amount = pos["margin"] + pnl
+        BALANCE += return_amount
+        POSITIONS.remove(pos)
+
+    msg = f"✅ 平仓成功！\n"
+    msg += f"币种：{symbol}\n"
+    msg += f"方向：{pos['side']}\n"
+    msg += f"开仓价：${pos['entry_price']:,.4f}\n"
+    msg += f"平仓价：${price:,.4f}\n"
+    msg += f"盈亏：{pnl:+,.2f} USDT\n"
+    msg += f"返还金额：{return_amount:,.2f} USDT"
+    send_message(chat_id, msg)
 
 def price_monitor_worker():
     print("价格监听线程已启动...")
     while True:
         try:
             with LST_LOCK:
-                current_listeners = list(LST)
-            for listener in current_listeners:
+                current = list(LST)
+            for listener in current:
                 symbol = listener["symbol"]
-                target_price = listener["target_price"]
+                target = listener["target_price"]
                 chat_id = listener["chat_id"]
-                current_price = get_current_price(symbol)
-                if current_price is None:
+
+                price = get_current_price(symbol)
+                if price is None:
                     continue
+
                 triggered = False
-                if target_price > current_price:
-                    if current_price >= target_price:
+                if target > price:
+                    if price >= target:
                         triggered = True
                 else:
-                    if current_price <= target_price:
+                    if price <= target:
                         triggered = True
+
                 if triggered:
                     msg = f"🚨 价格提醒！\n"
-                    msg += f"交易对：{symbol}\n"
-                    msg += f"当前价：${current_price:,.4f}\n"
-                    msg += f"目标价：${target_price:,.4f}"
+                    msg += f"币种：{symbol.upper()}\n"
+                    msg += f"当前价：${price:,.4f}\n"
+                    msg += f"目标价：${target:,.4f}"
                     send_message(chat_id, msg)
+
                     with LST_LOCK:
                         if listener in LST:
                             LST.remove(listener)
@@ -223,49 +226,43 @@ def price_monitor_worker():
         time.sleep(30)
 
 def handle_message(chat_id, text):
+    global BALANCE
     raw_text = text.strip()
 
+    # 1. 余额查询
     if raw_text == "myye":
         get_balance_info(chat_id)
         return
 
+    # 2. 充值指令：充值1000
+    recharge_match = re.match(r'^充值\s*([0-9.]+)$', raw_text)
+    if recharge_match:
+        try:
+            amount = float(recharge_match.group(1))
+            if amount > 0:
+                BALANCE += amount
+                send_message(chat_id, f"💰 充值成功！当前可用余额：{BALANCE:,.2f} USDT")
+        except ValueError:
+            pass
+        return
+
+    # 3. 持仓查询
     if raw_text == "仓位情况":
         get_position_info(chat_id)
         return
 
-    listen_match = re.match(r'^监听\s*([a-zA-Z]+)\s*([0-9.]+)$', raw_text)
-    if listen_match:
-        symbol_str = listen_match.group(1).upper()
-        target_price_str = listen_match.group(2)
-        if not symbol_str.endswith("_USDT"):
-            symbol_str += "_USDT"
-        try:
-            target_price = float(target_price_str)
-        except ValueError:
-            return
-        if target_price <= 0:
-            send_message(chat_id, "❌ 监听价格必须大于 0。")
-            return
-        with LST_LOCK:
-            for listener in LST:
-                if listener["symbol"] == symbol_str and listener["target_price"] == target_price:
-                    send_message(chat_id, "⚠️ 该监听已存在。")
-                    return
-            LST.append({
-                "symbol": symbol_str,
-                "target_price": target_price,
-                "chat_id": chat_id
-            })
-        send_message(chat_id, f"✅ 已开启监听：{symbol_str} 达到 ${target_price:,.4f} 时通知你。")
+    # 4. 平仓指令：平仓btc
+    close_match = re.match(r'^平仓\s*([a-zA-Z]+)$', raw_text)
+    if close_match:
+        close_position(chat_id, close_match.group(1))
         return
 
+    # 5. 开仓指令：btc，100x，多，300
     normalized_text = raw_text.replace("，", ",").replace(" ", ",")
     parts = [p for p in normalized_text.split(",") if p]
 
     if len(parts) == 4:
         symbol = parts[0].upper()
-        if not symbol.endswith("_USDT"):
-            symbol += "_USDT"
         lev_str = parts[1].lower().replace("x", "")
         if not lev_str.isdigit():
             return
@@ -275,11 +272,9 @@ def handle_message(chat_id, text):
             return
         direction = parts[2].lower()
         if direction in ["多", "long", "buy"]:
-            side = "buy"
-            dir_name = "做多"
+            dir_name = "多"
         elif direction in ["空", "short", "sell"]:
-            side = "sell"
-            dir_name = "做空"
+            dir_name = "空"
         else:
             return
         try:
@@ -289,7 +284,7 @@ def handle_message(chat_id, text):
         if margin_usdt <= 0:
             send_message(chat_id, "❌ 保证金必须大于 0。")
             return
-        execute_trade(chat_id, symbol, side, dir_name, leverage, margin_usdt)
+        open_position(chat_id, symbol, dir_name, dir_name, leverage, margin_usdt)
         return
 
     return
@@ -300,8 +295,8 @@ def main():
     else:
         print(f"权限控制已开启，只允许 User ID: {ALLOWED_USER_ID} 操作。")
 
-    monitor_thread = threading.Thread(target=price_monitor_worker, daemon=True)
-    monitor_thread.start()
+    t = threading.Thread(target=price_monitor_worker, daemon=True)
+    t.start()
 
     print("Bot 已启动...")
     offset = None
