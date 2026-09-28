@@ -27,10 +27,11 @@ LST_LOCK = threading.Lock()
 # 广播控制与时间记录
 # ==========================
 BROADCAST_ENABLED = True
-BROADCAST_INTERVAL = 900 # 15分钟 = 900秒
+BROADCAST_INTERVAL = 900  # 15分钟 = 900秒
 LAST_BROADCAST_TIME = time.time()
 LAST_ACTIVITY_TIME = time.time()
 ACTIVITY_LOCK = threading.Lock()
+IDLE_NOTIFIED = False  # 记录是否已发送过15分钟无操作提醒
 
 # ==========================
 # 情绪价值语料库（60条）
@@ -341,10 +342,10 @@ def price_monitor_worker():
         time.sleep(30)
 
 # ==========================
-# 后台监控线程（爆仓、盈亏±50%、定时广播）
+# 后台监控线程（爆仓、盈亏±50%、定时广播、15分钟提醒）
 # ==========================
 def background_worker(chat_id):
-    global LAST_BROADCAST_TIME, LAST_ACTIVITY_TIME
+    global LAST_BROADCAST_TIME, LAST_ACTIVITY_TIME, IDLE_NOTIFIED
     print("后台监控与广播线程已启动...")
     while True:
         try:
@@ -358,7 +359,16 @@ def background_worker(chat_id):
                 send_message(chat_id, f"📢 {msg}")
                 LAST_BROADCAST_TIME = current_time
 
-            # 2. 爆仓及盈亏 ±50% 检查
+            # 2. 15分钟无操作提醒（独立于广播，不重置活动时间，用状态开关控制）
+            with ACTIVITY_LOCK:
+                idle_time = current_time - LAST_ACTIVITY_TIME
+            
+            if current_positions and idle_time >= 15 * 60 and not IDLE_NOTIFIED:
+                mood_msg = get_random_message()
+                send_message(chat_id, f"⏰ 主人，你已经15分钟没操作啦！{mood_msg}")
+                IDLE_NOTIFIED = True  # 标记已提醒，避免重复轰炸
+
+            # 3. 爆仓及盈亏 ±50% 检查
             for pos in current_positions:
                 price = get_current_price(pos["symbol"])
                 if price is None: continue
@@ -392,15 +402,24 @@ def background_worker(chat_id):
         time.sleep(5)
 
 def handle_message(chat_id, text):
-    global BALANCE, LAST_ACTIVITY_TIME, BROADCAST_ENABLED, LAST_BROADCAST_TIME
+    global BALANCE, LAST_ACTIVITY_TIME, BROADCAST_ENABLED, LAST_BROADCAST_TIME, IDLE_NOTIFIED
     raw_text = text.strip()
+    
+    # ================= 欢迎回家逻辑 =================
+    current_time = time.time()
     with ACTIVITY_LOCK:
-        LAST_ACTIVITY_TIME = time.time()
+        idle_time = current_time - LAST_ACTIVITY_TIME
+        LAST_ACTIVITY_TIME = current_time  # 先更新最后活动时间
+    
+    # 如果超过5分钟（300秒）没说话，触发欢迎语
+    if idle_time >= 300:
+        send_message(chat_id, "欢迎主人回家🥰")
+        IDLE_NOTIFIED = False  # 重置状态，这样15分钟后还能再次提醒
 
     # 广播控制
     if raw_text == "开启播报":
         BROADCAST_ENABLED = True
-        LAST_BROADCAST_TIME = time.time() # 重置计时，避免马上触发
+        LAST_BROADCAST_TIME = time.time()
         send_message(chat_id, "🔊 情绪价值播报已开启！每15分钟我会准时出现～")
         return
     if raw_text == "关闭播报":
@@ -481,7 +500,6 @@ def main():
     else:
         print(f"权限控制已开启，只允许 User ID: {ALLOWED_USER_ID} 操作。")
     
-    # 启动后台监控与广播线程
     t1 = threading.Thread(target=background_worker, args=(ALLOWED_USER_ID,), daemon=True); t1.start()
     t2 = threading.Thread(target=price_monitor_worker, daemon=True); t2.start()
     
