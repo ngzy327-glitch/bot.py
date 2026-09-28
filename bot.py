@@ -16,17 +16,11 @@ PROFILE_PATH = os.getenv("PROFILE_PATH", "/data/profile.json")
 
 BASE_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
-# ==========================
-# 群聊引用回复 & 节流
-# ==========================
 REPLY_TO_MESSAGE_ID = None
 GROUP_REPLY_COUNTER = {}
 GROUP_REPLY_LOCK = threading.Lock()
 GROUP_REPLY_INTERVAL = 4
 
-# ==========================
-# 睡眠模式
-# ==========================
 SLEEPING = False
 SLEEP_START_TIME = 0
 
@@ -70,6 +64,7 @@ SLEEP_WAKE_MESSAGES = {
 SLEEP_WAKE_POOLS = {k: list(v) for k, v in SLEEP_WAKE_MESSAGES.items()}
 SLEEP_POOL_LOCK = threading.Lock()
 
+
 def get_wake_message(hours):
     if hours < 1:
         key = "short"
@@ -90,17 +85,12 @@ def get_wake_message(hours):
         pool.remove(msg)
         return msg
 
-# ==========================
-# 主动聊天配置
-# ==========================
+
 LAST_PROACTIVE_CHAT_TIME = time.time()
 PROACTIVE_CHAT_MIN = 1800
 PROACTIVE_CHAT_MAX = 5400
 NEXT_PROACTIVE_INTERVAL = random.randint(PROACTIVE_CHAT_MIN, PROACTIVE_CHAT_MAX)
 
-# ==========================
-# 账户数据
-# ==========================
 BALANCE = 1000.0
 POSITIONS = []
 POS_LOCK = threading.Lock()
@@ -109,9 +99,6 @@ HISTORY_LOCK = threading.Lock()
 LST = []
 LST_LOCK = threading.Lock()
 
-# ==========================
-# 广播控制
-# ==========================
 BROADCAST_ENABLED = True
 BROADCAST_INTERVAL = 3600
 LAST_BROADCAST_TIME = time.time()
@@ -119,9 +106,6 @@ LAST_ACTIVITY_TIME = time.time()
 ACTIVITY_LOCK = threading.Lock()
 IDLE_NOTIFIED = False
 
-# ==========================
-# 用户画像
-# ==========================
 PROFILE_LOCK = threading.Lock()
 USER_PROFILE = {
     "name": "主人",
@@ -131,6 +115,7 @@ USER_PROFILE = {
     "recent_mood": "",
     "notes": []
 }
+
 
 def load_profile():
     global USER_PROFILE
@@ -144,6 +129,7 @@ def load_profile():
     except Exception as e:
         print(f"加载画像失败: {e}")
 
+
 def save_profile():
     try:
         os.makedirs(os.path.dirname(PROFILE_PATH), exist_ok=True)
@@ -151,6 +137,7 @@ def save_profile():
             json.dump(USER_PROFILE, f, ensure_ascii=False, indent=2)
     except Exception as e:
         print(f"保存画像失败: {e}")
+
 
 def add_to_profile(category, value):
     if not value or not value.strip():
@@ -164,6 +151,7 @@ def add_to_profile(category, value):
         USER_PROFILE[category] = bucket[-30:]
     save_profile()
     return True
+
 
 def profile_to_text():
     p = USER_PROFILE
@@ -182,12 +170,11 @@ def profile_to_text():
         parts.append(f"备注：{', '.join(p['notes'])}")
     return "\n".join(parts) if parts else "（暂无画像）"
 
-# ==========================
-# AI 傲娇千金大小姐
-# ==========================
+
 CONV_HISTORY = {}
 CONV_LOCK = threading.Lock()
 HISTORY_MAX = 10
+
 
 def build_system_prompt():
     base = """你是主人的专属交易搭子，名字叫"小助手"。你的真实身份是一位傲娇的千金大小姐。
@@ -225,6 +212,7 @@ def build_system_prompt():
     profile_text = profile_to_text()
     return f"{base}\n\n【你偷偷记下的关于主人的事】\n{profile_text}"
 
+
 def ask_ai(chat_id, user_message):
     if not AI_API_KEY:
         return None
@@ -255,8 +243,8 @@ def ask_ai(chat_id, user_message):
         print(f"AI 调用失败: {e}")
     return None
 
+
 def ask_ai_proactive(chat_id):
-    """让 AI 主动想一个话题来找主人聊天"""
     if not AI_API_KEY:
         return None
     proactive_prompt = """你现在要主动找主人说话。请根据你的人设（傲娇千金大小姐）和你们之前的对话上下文，自然地说一句话来开启话题。
@@ -292,9 +280,11 @@ def ask_ai_proactive(chat_id):
         print(f"主动聊天生成失败: {e}")
     return None
 
+
 def extract_profile_async(chat_id, user_message, ai_reply):
     if not AI_API_KEY:
         return
+
     def worker():
         try:
             extract_prompt = f"""你是用户画像分析助手。请从下面这段用户和 AI 的对话中，提取用户的新特征。
@@ -308,7 +298,8 @@ AI 回：{ai_reply}
             resp = requests.post(
                 f"{AI_BASE_URL}/chat/completions",
                 headers={"Authorization": f"Bearer {AI_API_KEY}", "Content-Type": "application/json"},
-                json={"model": AI_MODEL, "messages": [{"role": "user", "content": extract_prompt}], "temperature": 0.2, "max_tokens": 300},
+                json={"model": AI_MODEL, "messages": [{"role": "user", "content": extract_prompt}],
+                      "temperature": 0.2, "max_tokens": 300},
                 timeout=30
             )
             data = resp.json()
@@ -338,11 +329,10 @@ AI 回：{ai_reply}
                 save_profile()
         except Exception as e:
             print(f"画像提取失败: {e}")
+
     threading.Thread(target=worker, daemon=True).start()
 
-# ==========================
-# 情绪价值语料库
-# ==========================
+
 EMOTIONAL_MESSAGES = [
     "主人，盯盘辛苦啦，喝口水吧！👀", "稳住，别慌，市场永远是对的。🌊",
     "行情总在绝望中诞生，在半信半疑中成长。💡", "亏钱了别难过，被市场毒打是大佬的必经之路。💪",
@@ -365,6 +355,7 @@ EMOTIONAL_MESSAGES = [
 MESSAGE_POOL = EMOTIONAL_MESSAGES.copy()
 POOL_LOCK = threading.Lock()
 
+
 def get_random_message():
     global MESSAGE_POOL
     with POOL_LOCK:
@@ -374,14 +365,14 @@ def get_random_message():
         MESSAGE_POOL.remove(msg)
         return msg
 
-# ==========================
-# 基础函数
-# ==========================
+
 def get_updates(offset=None):
     try:
         return requests.get(f"{BASE_URL}/getUpdates", params={"timeout": 30, "offset": offset}, timeout=35).json()
     except Exception as e:
-        print("获取更新失败:", e); return {}
+        print("获取更新失败:", e)
+        return {}
+
 
 def send_message(chat_id, text, reply_to_message_id=None):
     global REPLY_TO_MESSAGE_ID
@@ -396,18 +387,18 @@ def send_message(chat_id, text, reply_to_message_id=None):
     except Exception as e:
         print("发送消息失败:", e)
 
+
 def get_current_price(symbol):
     inst_id = f"{symbol.upper()}-USDT"
     try:
         resp = requests.get(f"https://www.okx.com/api/v5/market/ticker?instId={inst_id}", timeout=5).json()
         if resp.get("code") == "0" and resp.get("data"):
             return float(resp["data"][0]["last"])
-    except: pass
+    except Exception:
+        pass
     return None
 
-# ==========================
-# 交易逻辑
-# ==========================
+
 def get_balance_info(chat_id):
     total_pnl = 0.0
     with POS_LOCK:
@@ -420,14 +411,17 @@ def get_balance_info(chat_id):
     msg = f"💰 账户余额\n━━━━━━━━━━━━\n可用资金：{BALANCE:,.2f} USDT\n未实现盈亏：{total_pnl:+,.2f} USDT\n总权益：{BALANCE + total_pnl:,.2f} USDT"
     send_message(chat_id, msg)
 
+
 def get_position_info(chat_id):
     with POS_LOCK:
         ps = list(POSITIONS)
     if not ps:
-        send_message(chat_id, "📭 当前无持仓。空仓也是一种智慧！"); return
+        send_message(chat_id, "📭 当前无持仓。空仓也是一种智慧！")
+        return
     for pos in ps:
         price = get_current_price(pos["symbol"])
-        if not price: continue
+        if not price:
+            continue
         if pos["side"] == "多":
             pnl = (price - pos["entry_price"]) * pos["qty"]
             liq_price = pos["entry_price"] * (1 - 1 / pos["leverage"])
@@ -438,11 +432,13 @@ def get_position_info(chat_id):
         msg = f"📊 {pos['symbol']} 持仓\n━━━━━━━━━━━━\n方向：{pos['side']}\n持仓量：{pos['qty']:.4f}\n开仓价：${pos['entry_price']:,.4f}\n标记价：${price:,.4f}\n爆仓价：${liq_price:,.4f}\n━━━━━━━━━━━━\n保证金：{pos['margin']:,.2f} USDT\n杠杆：{pos['leverage']}x\n收益率：{roe:+.2f}%\n未实现盈亏：{pnl:+,.2f} USDT"
         send_message(chat_id, msg)
 
+
 def get_trade_history(chat_id):
     with HISTORY_LOCK:
         h = list(TRADE_HISTORY)
     if not h:
-        send_message(chat_id, "📭 暂无历史交易记录。"); return
+        send_message(chat_id, "📭 暂无历史交易记录。")
+        return
     total = len(h)
     pnl_sum = sum(t["pnl"] for t in h)
     wins = [t for t in h if t["pnl"] > 0]
@@ -451,23 +447,28 @@ def get_trade_history(chat_id):
     msg = f"📈 战绩报表\n━━━━━━━━━━━━\n总交易：{total} 次\n总盈亏：{pnl_sum:+,.2f} USDT\n━━━━━━━━━━━━\n胜率：{rate:.2f}%\n盈利：{len(wins)} 次\n亏损：{len(losses)} 次"
     send_message(chat_id, msg)
 
+
 def open_position(chat_id, symbol, dir_name, leverage, margin):
     global BALANCE
     if margin > BALANCE:
-        send_message(chat_id, f"❌ 保证金不足！当前可用：{BALANCE:,.2f} USDT"); return
+        send_message(chat_id, f"❌ 保证金不足！当前可用：{BALANCE:,.2f} USDT")
+        return
     price = get_current_price(symbol)
     if not price:
-        send_message(chat_id, f"❌ 无法获取 {symbol} 行情。"); return
+        send_message(chat_id, f"❌ 无法获取 {symbol} 行情。")
+        return
     qty = (margin * leverage) / price
     with POS_LOCK:
         for p in POSITIONS:
             if p["symbol"] == symbol.upper():
-                send_message(chat_id, f"⚠️ 已有 {symbol.upper()} 持仓，请先平仓。"); return
+                send_message(chat_id, f"⚠️ 已有 {symbol.upper()} 持仓，请先平仓。")
+                return
         BALANCE -= margin
         POSITIONS.append({"symbol": symbol.upper(), "side": dir_name, "leverage": leverage,
                           "margin": margin, "entry_price": price, "qty": qty, "chat_id": chat_id,
                           "notified_win": False, "notified_loss": False})
     send_message(chat_id, f"✅ 开仓成功！\n币种：{symbol.upper()}\n方向：{dir_name}\n杠杆：{leverage}x\n保证金：{margin:,.2f} USDT\n开仓价：${price:,.4f}\n数量：{qty:.4f}")
+
 
 def close_position(chat_id, symbol):
     global BALANCE
@@ -475,54 +476,66 @@ def close_position(chat_id, symbol):
     with POS_LOCK:
         pos = next((p for p in POSITIONS if p["symbol"] == symbol), None)
         if not pos:
-            send_message(chat_id, f"📭 未找到 {symbol} 的持仓。"); return
+            send_message(chat_id, f"📭 未找到 {symbol} 的持仓。")
+            return
         price = get_current_price(symbol)
         if not price:
-            send_message(chat_id, "❌ 无法获取行情。"); return
+            send_message(chat_id, "❌ 无法获取行情。")
+            return
         pnl = (price - pos["entry_price"]) * pos["qty"] if pos["side"] == "多" else (pos["entry_price"] - price) * pos["qty"]
         BALANCE += pos["margin"] + pnl
         POSITIONS.remove(pos)
         with HISTORY_LOCK:
             TRADE_HISTORY.append({"symbol": symbol, "side": pos["side"], "pnl": pnl})
-    send_message(chat_id, f"✅ 平仓成功！\n币种：{symbol}\n方向：{pos['side']}\n盈亏：{pnl:+,.2f} USDT\n返还：{pos['margin']+pnl:,.2f} USDT")
+    send_message(chat_id, f"✅ 平仓成功！\n币种：{symbol}\n方向：{pos['side']}\n盈亏：{pnl:+,.2f} USDT\n返还：{pos['margin'] + pnl:,.2f} USDT")
+
 
 def trigger_liquidation(symbol, price, pos):
     with POS_LOCK:
-        if pos in POSITIONS: POSITIONS.remove(pos)
+        if pos in POSITIONS:
+            POSITIONS.remove(pos)
     with HISTORY_LOCK:
         TRADE_HISTORY.append({"symbol": symbol, "side": pos["side"], "pnl": -pos["margin"]})
     if not SLEEPING:
         send_message(pos["chat_id"], f"🔔 菜狗你仓位炸了\n币种：{symbol}\n方向：{pos['side']}\n损失保证金：{pos['margin']:,.2f} USDT")
 
+
 def withdraw_balance(chat_id, amount_str):
     global BALANCE
-    try: amount = float(amount_str)
-    except: return
+    try:
+        amount = float(amount_str)
+    except Exception:
+        return
     if amount <= 0 or amount > BALANCE:
-        send_message(chat_id, "❌ 提现金额不合法或余额不足！"); return
+        send_message(chat_id, "❌ 提现金额不合法或余额不足！")
+        return
     BALANCE -= amount
     send_message(chat_id, f"✅ 提现成功！\n提现：{amount:,.2f} USDT\n当前余额：{BALANCE:,.2f} USDT")
 
-# ==========================
-# 后台线程
-# ==========================
+
 def price_monitor_worker():
     while True:
         try:
             if SLEEPING:
-                time.sleep(30); continue
-            with LST_LOCK: cur = list(LST)
+                time.sleep(30)
+                continue
+            with LST_LOCK:
+                cur = list(LST)
             for listener in cur:
                 price = get_current_price(listener["symbol"])
-                if price is None: continue
+                if price is None:
+                    continue
                 t = listener["target_price"]
                 triggered = (t > price and price >= t) or (t <= price and price <= t)
                 if triggered:
                     send_message(listener["chat_id"], f"🚨 价格提醒！\n币种：{listener['symbol']}\n当前价：${price:,.4f}")
                     with LST_LOCK:
-                        if listener in LST: LST.remove(listener)
-        except Exception as e: print(f"监听异常: {e}")
+                        if listener in LST:
+                            LST.remove(listener)
+        except Exception as e:
+            print(f"监听异常: {e}")
         time.sleep(30)
+
 
 def background_worker(chat_id):
     global LAST_BROADCAST_TIME, LAST_ACTIVITY_TIME, IDLE_NOTIFIED
@@ -530,19 +543,23 @@ def background_worker(chat_id):
     while True:
         try:
             if SLEEPING:
-                time.sleep(5); continue
+                time.sleep(5)
+                continue
             now = time.time()
-            with POS_LOCK: ps = list(POSITIONS)
+            with POS_LOCK:
+                ps = list(POSITIONS)
             if BROADCAST_ENABLED and (now - LAST_BROADCAST_TIME >= BROADCAST_INTERVAL):
                 send_message(chat_id, f"📢 {get_random_message()}")
                 LAST_BROADCAST_TIME = now
-            with ACTIVITY_LOCK: idle = now - LAST_ACTIVITY_TIME
+            with ACTIVITY_LOCK:
+                idle = now - LAST_ACTIVITY_TIME
             if ps and idle >= 30 * 60 and not IDLE_NOTIFIED:
                 send_message(chat_id, f"⏰ 主人，30分钟没操作啦！{get_random_message()}")
                 IDLE_NOTIFIED = True
             for pos in ps:
                 price = get_current_price(pos["symbol"])
-                if price is None: continue
+                if price is None:
+                    continue
                 if pos["side"] == "多":
                     pnl = (price - pos["entry_price"]) * pos["qty"]
                     liq_price = pos["entry_price"] * (1 - 1 / pos["leverage"])
@@ -551,23 +568,27 @@ def background_worker(chat_id):
                     liq_price = pos["entry_price"] * (1 + 1 / pos["leverage"])
                 roe = (pnl / pos["margin"]) * 100 if pos["margin"] > 0 else 0.0
                 if pos["side"] == "多" and price <= liq_price:
-                    trigger_liquidation(pos["symbol"], price, pos); continue
+                    trigger_liquidation(pos["symbol"], price, pos)
+                    continue
                 if pos["side"] == "空" and price >= liq_price:
-                    trigger_liquidation(pos["symbol"], price, pos); continue
+                    trigger_liquidation(pos["symbol"], price, pos)
+                    continue
                 if roe >= 50 and not pos.get("notified_win"):
                     send_message(pos["chat_id"], "⏰ 主人，盈利 50%+，考虑止盈吗？🚀")
                     with POS_LOCK:
-                        if pos in POSITIONS: pos["notified_win"] = True
+                        if pos in POSITIONS:
+                            pos["notified_win"] = True
                 if roe <= -50 and not pos.get("notified_loss"):
                     send_message(pos["chat_id"], "⏰ 主人，亏损 50%，注意风险！🩸")
                     with POS_LOCK:
-                        if pos in POSITIONS: pos["notified_loss"] = True
+                        if pos in POSITIONS:
+                            pos["notified_loss"] = True
         except Exception as e:
             print(f"后台异常: {e}")
         time.sleep(5)
 
+
 def proactive_chat_worker(chat_id):
-    """主动找主人聊天的后台线程"""
     global LAST_PROACTIVE_CHAT_TIME, NEXT_PROACTIVE_INTERVAL
     print("主动聊天线程已启动...")
     while True:
@@ -587,9 +608,7 @@ def proactive_chat_worker(chat_id):
             print(f"主动聊天异常: {e}")
         time.sleep(60)
 
-# ==========================
-# 消息处理
-# ==========================
+
 def handle_message(chat_id, text, message_id=None):
     global BALANCE, LAST_ACTIVITY_TIME, BROADCAST_ENABLED, LAST_BROADCAST_TIME, IDLE_NOTIFIED
     global REPLY_TO_MESSAGE_ID, SLEEPING, SLEEP_START_TIME, LAST_PROACTIVE_CHAT_TIME, NEXT_PROACTIVE_INTERVAL
@@ -600,7 +619,6 @@ def handle_message(chat_id, text, message_id=None):
     with ACTIVITY_LOCK:
         idle = now - LAST_ACTIVITY_TIME
         LAST_ACTIVITY_TIME = now
-    # 用户发言后重置主动聊天计时
     LAST_PROACTIVE_CHAT_TIME = now
     NEXT_PROACTIVE_INTERVAL = random.randint(PROACTIVE_CHAT_MIN, PROACTIVE_CHAT_MAX)
 
@@ -632,7 +650,8 @@ def handle_message(chat_id, text, message_id=None):
             msg += f"不喜欢：{', '.join(p.get('dislikes') or ['暂无'])}\n"
             msg += f"最近情绪：{p.get('recent_mood') or '暂无'}\n"
             msg += f"备注：{', '.join(p.get('notes') or ['暂无'])}"
-            send_message(chat_id, msg); return
+            send_message(chat_id, msg)
+            return
 
         if raw.startswith("记住"):
             content = raw[2:].strip(" ：:，,")
@@ -646,48 +665,63 @@ def handle_message(chat_id, text, message_id=None):
                 USER_PROFILE.update({"name": "主人", "traits": [], "preferences": [],
                                      "dislikes": [], "recent_mood": "", "notes": []})
             save_profile()
-            send_message(chat_id, "🧹 画像已清空，我们重新认识一下～"); return
+            send_message(chat_id, "🧹 画像已清空，我们重新认识一下～")
+            return
 
         if raw == "清空对话":
             with CONV_LOCK:
                 CONV_HISTORY[chat_id] = []
-            send_message(chat_id, "🧹 对话已清空～"); return
+            send_message(chat_id, "🧹 对话已清空～")
+            return
 
         if raw == "开启播报":
-            BROADCAST_ENABLED = True; LAST_BROADCAST_TIME = time.time()
-            send_message(chat_id, "🔊 播报已开启！"); return
+            BROADCAST_ENABLED = True
+            LAST_BROADCAST_TIME = time.time()
+            send_message(chat_id, "🔊 播报已开启！")
+            return
         if raw == "关闭播报":
             BROADCAST_ENABLED = False
-            send_message(chat_id, "🔇 播报已关闭。"); return
+            send_message(chat_id, "🔇 播报已关闭。")
+            return
         if raw == "安静":
             BROADCAST_ENABLED = False
-            send_message(chat_id, "🤫 我安静了。"); return
+            send_message(chat_id, "🤫 我安静了。")
+            return
         if raw == "正常":
-            BROADCAST_ENABLED = True; LAST_BROADCAST_TIME = time.time()
-            send_message(chat_id, "😌 恢复正常模式～"); return
+            BROADCAST_ENABLED = True
+            LAST_BROADCAST_TIME = time.time()
+            send_message(chat_id, "😌 恢复正常模式～")
+            return
 
         if raw.endswith(".") or raw.endswith("。"):
             symbol = raw[:-1].strip().upper()
             if symbol.isalpha() and 2 <= len(symbol) <= 10:
                 price = get_current_price(symbol)
-                if price: send_message(chat_id, f"📊 {symbol}\n💰 ${price:,.4f}")
+                if price:
+                    send_message(chat_id, f"📊 {symbol}\n💰 ${price:,.4f}")
             return
 
-        if raw == "myye": get_balance_info(chat_id); return
-        if raw == "战绩": get_trade_history(chat_id); return
-        if raw == "仓位情况": get_position_info(chat_id); return
+        if raw == "myye":
+            get_balance_info(chat_id)
+            return
+        if raw == "战绩":
+            get_trade_history(chat_id)
+            return
+        if raw == "仓位情况":
+            get_position_info(chat_id)
+            return
 
         if raw.startswith("监听"):
             m = re.match(r'^监听\s*([a-zA-Z]+)\s*([0-9.]+)$', raw)
             if m:
                 sym, tgt = m.group(1).upper(), float(m.group(2))
-                with LST_LOCK: LST.append({"symbol": sym, "target_price": tgt, "chat_id": chat_id})
-                send_message(chat_id, f"✅ 监听 {sym} @ ${tgt:,.4)$f}")
-            return',
+                with LST_LOCK:
+                    LST.append({"symbol": sym, "target_price": tgt, "chat_id": chat_id})
+                send_message(chat_id, f"✅ 监听 {sym} @ ${tgt:,.4f}")
+            return
 
-        if raw raw.startswith("充值"):
-            m = re)
-.match(r'^充值\s*([           0-9. if]+)$', raw)
+        if raw.startswith("充值"):
+            m = re.match(r'^充值\s*([0-9.]+)$', raw)
             if m:
                 amt = float(m.group(1))
                 if amt > 0:
@@ -696,12 +730,15 @@ def handle_message(chat_id, text, message_id=None):
             return
 
         if raw.startswith("提现"):
-            m = re.match(r'^提现\s*([0-9.]+ m: withdraw_balance(chat_id, m.group(1))
+            m = re.match(r'^提现\s*([0-9.]+)$', raw)
+            if m:
+                withdraw_balance(chat_id, m.group(1))
             return
 
         if raw.startswith("平仓"):
             m = re.match(r'^平仓\s*([a-zA-Z]+)$', raw)
-            if m: close_position(chat_id, m.group(1))
+            if m:
+                close_position(chat_id, m.group(1))
             return
 
         parts = [p for p in raw.replace("，", ",").replace(" ", ",").split(",") if p]
@@ -719,7 +756,8 @@ def handle_message(chat_id, text, message_id=None):
                             if margin > 0:
                                 open_position(chat_id, sym, dir_name, leverage, margin)
                                 return
-                        except: pass
+                        except Exception:
+                            pass
 
         if AI_API_KEY:
             if chat_id < 0:
@@ -739,6 +777,7 @@ def handle_message(chat_id, text, message_id=None):
     finally:
         REPLY_TO_MESSAGE_ID = None
 
+
 def main():
     load_profile()
     if not ALLOWED_USER_ID:
@@ -750,9 +789,12 @@ def main():
     else:
         print("⚠️ 未配置 AI_API_KEY，聊天功能关闭")
 
-    t1 = threading.Thread(target=background_worker, args=(ALLOWED_USER_ID,), daemon=True); t1.start()
-    t2 = threading.Thread(target=price_monitor_worker, daemon=True); t2.start()
-    t3 = threading.Thread(target=proactive_chat_worker, args=(ALLOWED_USER_ID,), daemon=True); t3.start()
+    t1 = threading.Thread(target=background_worker, args=(ALLOWED_USER_ID,), daemon=True)
+    t1.start()
+    t2 = threading.Thread(target=price_monitor_worker, daemon=True)
+    t2.start()
+    t3 = threading.Thread(target=proactive_chat_worker, args=(ALLOWED_USER_ID,), daemon=True)
+    t3.start()
 
     print("Bot 已启动...")
     offset = None
@@ -762,12 +804,15 @@ def main():
             for update in updates["result"]:
                 offset = update["update_id"] + 1
                 msg = update.get("message")
-                if not msg: continue
-                if ALLOWED_USER_ID and str(msg.get("from", {}).get("id", "")) != ALLOWED_USER_ID: continue
+                if not msg:
+                    continue
+                if ALLOWED_USER_ID and str(msg.get("from", {}).get("id", "")) != ALLOWED_USER_ID:
+                    continue
                 text = msg.get("text", "")
                 if text:
                     handle_message(msg["chat"]["id"], text, msg["message_id"])
         time.sleep(1)
+
 
 if __name__ == "__main__":
     main()
