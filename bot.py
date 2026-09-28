@@ -11,6 +11,7 @@ from urllib.parse import urlencode
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GATE_API_KEY = os.getenv("GATE_API_KEY")
 GATE_API_SECRET = os.getenv("GATE_API_SECRET")
+# 模拟盘测试网地址
 GATE_BASE_URL = os.getenv("GATE_BASE_URL", "https://api-testnet.gateapi.io/api/v4")
 ALLOWED_USER_ID = os.getenv("ALLOWED_USER_ID")
 
@@ -38,17 +39,22 @@ def send_message(chat_id, text):
         print("发送消息失败:", e)
 
 def gen_sign(method, url, query_string="", body_string=""):
+    """Gate.io API v4 签名"""
     t = time.time()
     m = hashlib.sha512()
     m.update(body_string.encode("utf-8"))
     body_hash = m.hexdigest()
+
     timestamp = str(int(t))
+    # 必须严格按照这个格式拼接签名串
     sign_string = f"{method}\n{url}\n{query_string}\n{body_hash}\n{timestamp}"
+    
     sign = hmac.new(
         GATE_API_SECRET.encode("utf-8"),
         sign_string.encode("utf-8"),
         hashlib.sha512
     ).hexdigest()
+
     headers = {
         "Accept": "application/json",
         "Content-Type": "application/json",
@@ -59,15 +65,25 @@ def gen_sign(method, url, query_string="", body_string=""):
     return headers
 
 def gate_request(method, endpoint, params=None, body=None):
-    url = f"{GATE_BASE_URL}{endpoint}"
+    """封装 Gate.io 请求，修复了拼接URL可能多出 '?' 导致签名错误的问题"""
+    url_path = endpoint
     query_string = urlencode(params) if params else ""
     body_string = body if body else ""
-    headers = gen_sign(method, endpoint, query_string, body_string)
+
+    # 生成签名时，url 只传路径（不包含域名和 /api/v4 前缀）
+    headers = gen_sign(method, url_path, query_string, body_string)
+
+    # 构造真实的请求 URL
+    if query_string:
+        full_url = f"{GATE_BASE_URL}{url_path}?{query_string}"
+    else:
+        full_url = f"{GATE_BASE_URL}{url_path}"
+
     try:
         if method == "GET":
-            resp = requests.get(f"{url}?{query_string}", headers=headers, timeout=10)
+            resp = requests.get(full_url, headers=headers, timeout=10)
         elif method == "POST":
-            resp = requests.post(url, headers=headers, data=body_string, timeout=10)
+            resp = requests.post(full_url, headers=headers, data=body_string, timeout=10)
         else:
             return None
         return resp.json()
@@ -76,6 +92,7 @@ def gate_request(method, endpoint, params=None, body=None):
         return None
 
 def get_current_price(symbol):
+    """获取币种最新价格"""
     try:
         resp = requests.get(f"{GATE_BASE_URL}/futures/usdt/tickers?contract={symbol}", timeout=5).json()
         if isinstance(resp, list) and len(resp) > 0:
@@ -85,10 +102,9 @@ def get_current_price(symbol):
     return None
 
 def get_balance_info(chat_id):
-    # 调用 Gate.io 合约账户余额接口
+    """查询余额"""
     res = gate_request("GET", "/futures/usdt/accounts")
     
-    # 如果返回结果不是字典，或者没有 total 字段，直接把原始错误发给用户看
     if not isinstance(res, dict) or "total" not in res:
         error_msg = str(res)
         send_message(chat_id, f"❌ 获取余额失败\nGate.io 返回详情：\n{error_msg}")
@@ -104,6 +120,7 @@ def get_balance_info(chat_id):
     send_message(chat_id, msg)
 
 def get_position_info(chat_id):
+    """查询持仓"""
     res = gate_request("GET", "/futures/usdt/positions")
     if not isinstance(res, list):
         send_message(chat_id, f"❌ 获取持仓失败：{str(res)}")
@@ -142,6 +159,7 @@ def get_position_info(chat_id):
         send_message(chat_id, msg)
 
 def execute_trade(chat_id, symbol, side, dir_name, leverage, margin_usdt):
+    """市价开仓"""
     # 1. 设置杠杆
     lev_body = json.dumps({"leverage": str(leverage)})
     lev_res = gate_request("POST", f"/futures/usdt/positions/{symbol}/leverage", body=lev_body)
@@ -162,7 +180,7 @@ def execute_trade(chat_id, symbol, side, dir_name, leverage, margin_usdt):
     
     multiplier = float(contract_info["quanto_multiplier"])
     
-    # 3. 计算下单张数
+    # 3. 计算张数
     size = int((margin_usdt * leverage) / (price * multiplier))
     if size <= 0:
         send_message(chat_id, f"❌ 保证金过小，计算出的下单张数为 0。")
@@ -172,9 +190,9 @@ def execute_trade(chat_id, symbol, side, dir_name, leverage, margin_usdt):
     order_body = {
         "contract": symbol,
         "size": size,
-        "price": "0",     # 市价单
-        "tif": "ioc",     # 立即成交否则取消
-        "side": side      # buy / sell
+        "price": "0",
+        "tif": "ioc",
+        "side": side
     }
     order_res = gate_request("POST", "/futures/usdt/orders", body=json.dumps(order_body))
 
@@ -192,6 +210,7 @@ def execute_trade(chat_id, symbol, side, dir_name, leverage, margin_usdt):
         send_message(chat_id, f"❌ 开仓失败：{error_msg}")
 
 def price_monitor_worker():
+    """后台价格监听线程"""
     print("价格监听线程已启动...")
     while True:
         try:
@@ -204,6 +223,7 @@ def price_monitor_worker():
                 current_price = get_current_price(symbol)
                 if current_price is None:
                     continue
+                
                 triggered = False
                 if target_price > current_price:
                     if current_price >= target_price:
@@ -211,12 +231,14 @@ def price_monitor_worker():
                 else:
                     if current_price <= target_price:
                         triggered = True
+                        
                 if triggered:
                     msg = f"🚨 价格提醒！\n"
                     msg += f"交易对：{symbol}\n"
                     msg += f"当前价：${current_price:,.4f}\n"
                     msg += f"目标价：${target_price:,.4f}"
                     send_message(chat_id, msg)
+                    
                     with LISTENER_LOCK:
                         if listener in LISTENERS:
                             LISTENERS.remove(listener)
@@ -248,17 +270,19 @@ def handle_message(chat_id, text):
         if target_price <= 0:
             send_message(chat_id, "❌ 监听价格必须大于 0。")
             return
+            
         with LISTENER_LOCK:
             for listener in LISTENERS:
                 if listener["symbol"] == symbol_str and listener["target_price"] == target_price:
                     send_message(chat_id, "⚠️ 该监听已存在。")
                     return
-            LISTENERS.append({
-                "symbol": symbol_str,
-                "target_price": target_price,
-                "chat_id": chat_id
+            LISTENERS if.append({
+                "symbol": text symbol_str,
+                "target_price": target_price:
+,
+                "chat_id                   ": chat_id
             })
-        send_message(chat_id, f"✅ 已开启监听：{symbol_str} 达到 ${target_price:,.4f} 时通知你。")
+ handle        send_message(chat_message_id, f"✅ 已开启监听：{symbol_str} 达到 ${target_price:,.4f} 时通知你。")
         return
 
     normalized_text = raw_text.replace("，", ",").replace(" ", ",")
@@ -268,13 +292,16 @@ def handle_message(chat_id, text):
         symbol = parts[0].upper()
         if not symbol.endswith("_USDT"):
             symbol += "_USDT"
+            
         lev_str = parts[1].lower().replace("x", "")
         if not lev_str.isdigit():
             return
         leverage = int(lev_str)
+        
         if leverage <= 0 or leverage > 125:
             send_message(chat_id, "❌ 杠杆范围必须在 1-125 之间。")
             return
+            
         direction = parts[2].lower()
         if direction in ["多", "long", "buy"]:
             side = "buy"
@@ -284,13 +311,16 @@ def handle_message(chat_id, text):
             dir_name = "做空"
         else:
             return
+            
         try:
             margin_usdt = float(parts[3])
         except ValueError:
             return
+            
         if margin_usdt <= 0:
             send_message(chat_id, "❌ 保证金必须大于 0。")
             return
+            
         execute_trade(chat_id, symbol, side, dir_name, leverage, margin_usdt)
         return
 
@@ -323,8 +353,7 @@ def main():
                         continue
                 chat_id = message["chat"]["id"]
                 text = message.get("text", "")
-                if text:
-                    handle_message(chat_id, text)
+               (chat_id, text)
         time.sleep(1)
 
 if __name__ == "__main__":
