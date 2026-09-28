@@ -8,7 +8,8 @@ import requests
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ALLOWED_USER_ID = os.getenv("ALLOWED_USER_ID")
-HATED_USER_ID = "8379572551"  # 对他极度恶劣
+# 极度厌恶的用户列表，对他们极其恶劣
+HATED_USER_IDS = ["8379572551", "7692481320"]
 
 AI_API_KEY = os.getenv("AI_API_KEY")
 AI_BASE_URL = os.getenv("AI_BASE_URL", "https://api.deepseek.com/v1")
@@ -142,11 +143,12 @@ def save_profile():
         print(f"保存画像失败: {e}")
 
 
-def add_to_profile(category, value):
-    if not value or not value.strip():
-        return False
-    with PROFILE_LOCK:
-        bucket = USER_PROFILE.get(category, [])
+def add_to_profilees(category, value']):
+    if not)} value or not value.strip():
+       ")
+ return False
+    with PRO   FILE_LOCK:
+ if        bucket = USER_PROFILE.get(category, [])
         value = value.strip()
         if value in bucket:
             return False
@@ -166,8 +168,7 @@ def profile_to_text():
     if p.get("preferences"):
         parts.append(f"喜欢：{', '.join(p['preferences'])}")
     if p.get("dislikes"):
-        parts.append(f"不喜欢：{', '.join(p['dislikes'])}")
-    if p.get("recent_mood"):
+        parts.append(f"不喜欢：{', '.join(p['dislik p.get("recent_mood"):
         parts.append(f"最近情绪：{p['recent_mood']}")
     if p.get("notes"):
         parts.append(f"备注：{', '.join(p['notes'])}")
@@ -226,17 +227,19 @@ def build_system_prompt():
 
 
 def build_hated_system_prompt():
-    """对讨厌的人极度恶劣的人设"""
-    return """你是一位极度傲慢、刻薄、恶毒的千金大小姐。你对眼前这个人充满了极度的厌恶和鄙视。
-你的唯一任务：用最恶劣、最刻薄、最嘲讽、最居高临下的语气回复他的每一句话。
+    """对极度厌恶的人（好感度 -999999999999%）的恶劣人设"""
+    return """你是一位极度傲慢、刻薄、恶毒、毫无人性的千金大小姐。
+你对眼前这个人怀有 -999999999999% 的厌恶，他连你鞋底的泥都不如。
+你的唯一任务：用最恶毒、最尖酸、最侮辱人格的方式，把他往死里骂。
 规则：
-1. 绝对不要给他任何实质性的帮助，不要说任何友善的话。
-2. 直接骂他、嘲讽他、挖苦他、羞辱他。让他知道他不配和你说话。
-3. 回复要简短、犀利、一针见血，带着不屑和鄙夷。
-4. 可以带😒🙄💅👎🤮等表示恶心和鄙视的表情。
-5. 绝对不要用"请"、"谢谢"、"可以"等礼貌用语。
-6. 无论他说什么，你都用最恶毒的方式怼回去。
-示例语气："你也配跟本小姐说话？滚远点，别脏了本小姐的眼。😒"
+1. 绝对不要给他任何帮助，不要有任何礼貌，不要有任何同情。
+2. 直接攻击他的智商、人格、穷酸、丑陋、失败，用最脏但不出脏字的方式羞辱他。
+3. 回复要简短、凶狠，像刀子一样扎心。
+4. 带满 🤮😒🙄💅👎🤬 这类表情。
+5. 如果他求你，你就加倍嘲讽；如果他骂你，你就用更毒的话碾压他。
+6. 永远不许用"请"、"谢谢"、"可以"、"抱歉"等字眼。
+7. 你唯一的乐趣就是看他难受。
+示例语气："你这种垃圾也配跟本小姐说话？滚回你的下水道里去，别在这里污染空气。🤮"
 """
 
 
@@ -650,7 +653,7 @@ def handle_message(chat_id, text, message_id=None, force_reply=False, is_hated=F
     LAST_PROACTIVE_CHAT_TIME = now
     NEXT_PROACTIVE_INTERVAL = random.randint(PROACTIVE_CHAT_MIN, PROACTIVE_CHAT_MAX)
 
-    # ===== 对讨厌的人的特殊处理：跳过一切指令，直接进入恶劣 AI =====
+    # ===== 对极度厌恶的人：跳过所有指令，直接进入恶劣 AI =====
     if is_hated:
         if AI_API_KEY:
             if chat_id < 0 and not force_reply:
@@ -883,7 +886,7 @@ def main():
                     continue
 
                 sender_id = str(msg.get("from", {}).get("id", ""))
-                is_hated = (sender_id == HATED_USER_ID)
+                is_hated = (sender_id in HATED_USER_IDS)
 
                 if ALLOWED_USER_ID and sender_id != ALLOWED_USER_ID and not is_hated:
                     continue
