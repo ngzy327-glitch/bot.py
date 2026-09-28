@@ -5,19 +5,6 @@ import time
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 BASE_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
-# CoinGecko 的币种映射
-COIN_MAP = {
-    "BTC": "bitcoin",
-    "ETH": "ethereum",
-    "SOL": "solana",
-    "DOGE": "dogecoin",
-    "BNB": "binancecoin",
-    "XRP": "ripple",
-    "ADA": "cardano",
-    "DOT": "polkadot",
-    "LTC": "litecoin"
-}
-
 def get_updates(offset=None):
     url = f"{BASE_URL}/getUpdates"
     params = {"timeout": 30, "offset": offset}
@@ -37,48 +24,57 @@ def send_message(chat_id, text):
         print("发送消息失败:", e)
 
 def get_crypto_data(symbol):
-    coin_id = COIN_MAP.get(symbol, symbol.lower())
+    # 使用 OKX 交易所公开接口，无需 API Key，容错率高
+    okx_symbol = f"{symbol}-USDT"
     
-    # 1. 获取美元兑人民币汇率
-    cny_rate = 7.2
+    # 1. 获取最新价格和 24h 开盘价
+    url_ticker = f"https://www.okx.com/api/v5/market/ticker?instId={okx_symbol}"
+    try:
+        resp = requests.get(url_ticker, timeout=10).json()
+        if resp.get("code") != "0" or not resp.get("data"):
+            return None, f"OKX 找不到交易对 {okx_symbol}"
+            
+        item = resp["data"][0]
+        last_price = float(item["last"])
+        open_24h = float(item["open24h"])
+        
+        if open_24h == 0:
+            change_24h = 0.0
+        else:
+            change_24h = ((last_price - open_24h) / open_24h) * 100
+            
+    except Exception as e:
+        print(f"OKX 行情请求异常: {e}")
+        return None, "网络请求异常"
+
+    # 2. 获取 8 天 K 线计算 7d 涨跌幅
+    change_7d = None
+    url_kline = f"https://www.okx.com/api/v5/market/candles?instId={okx_symbol}&bar=1D&limit=8"
+    try:
+        kline_resp = requests.get(url_kline, timeout=10).json()
+        if kline_resp.get("code") == "0" and len(kline_resp.get("data", [])) >= 8:
+            # OKX K线格式：[时间, 开盘, 最高, 最低, 收盘, 成交量, ...]
+            price_7d_ago = float(kline_resp["data"][0][4])
+            change_7d = ((last_price - price_7d_ago) / price_7d_ago) * 100
+    except Exception as e:
+        print(f"OKX K线请求异常: {e}")
+
+    # 3. 获取美元兑人民币汇率
+    price_cny = None
     try:
         fx_resp = requests.get("https://api.frankfurter.app/latest?from=USD&to=CNY", timeout=5).json()
         if "rates" in fx_resp and "CNY" in fx_resp["rates"]:
-            cny_rate = fx_resp["rates"]["CNY"]
-    except:
-        pass
-
-    # 2. 获取 CoinGecko 行情数据（价格+涨跌幅）
-    url = f"https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids={coin_id}&price_change_percentage=24h,7d"
-    try:
-        resp = requests.get(url, timeout=10)
-        if resp.status_code != 200:
-            return None, f"API返回错误，状态码：{resp.status_code}"
-            
-        data = resp.json()
-        if not isinstance(data, list) or len(data) == 0:
-            return None, "API返回数据为空"
-            
-        item = data[0]
-        if "current_price" not in item:
-            return None, "找不到该币种"
-
-        price_usd = item["current_price"]
-        price_cny = price_usd * cny_rate
-        
-        change_24h = item.get("price_change_percentage_24h")
-        change_7d = item.get("price_change_percentage_7d_in_currency")
-        
-        return {
-            "price_usd": price_usd,
-            "price_cny": price_cny,
-            "change_24h": change_24h,
-            "change_7d": change_7d
-        }, None
-        
+            usd_cny_rate = fx_resp["rates"]["CNY"]
+            price_cny = last_price * usd_cny_rate
     except Exception as e:
-        print(f"CoinGecko 请求异常: {e}")
-        return None, f"网络请求异常: {e}"
+        print(f"汇率请求异常: {e}")
+
+    return {
+        "price_usd": last_price,
+        "price_cny": price_cny,
+        "change_24h": change_24h,
+        "change_7d": change_7d
+    }, None
 
 def reply_crypto(chat_id, symbol):
     data, err = get_crypto_data(symbol)
@@ -96,10 +92,10 @@ def reply_crypto(chat_id, symbol):
     # 处理极小价格（如 SHIB），动态调整小数位数
     if price_usd < 0.01:
         usd_str = f"${price_usd:,.8f}"
-        cny_str = f"¥{price_cny:,.8f}"
+        cny_str = f"¥{price_cny:,.8f}" if price_cny else "¥ --"
     else:
         usd_str = f"${price_usd:,.4f}"
-        cny_str = f"¥{price_cny:,.4f}"
+        cny_str = f"¥{price_cny:,.4f}" if price_cny else "¥ --"
 
     msg = f"📊 {symbol} 行情\n"
     msg += "━━━━━━━━━━━━\n"
@@ -151,4 +147,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
